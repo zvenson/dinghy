@@ -460,6 +460,20 @@ static void fm1__frame(void)
                                    * unit, 2026-10-28: a bottom pad hit also hit the top pad on its mux address) */
 static uint16_t smk_pad_clock;            /* one tick per round of the 24 analog readings (2.4 ms) */
 
+#define SMK_PAD_TOP 1000u         /* the reading of a full hit -> 127 (a unit, 2026-10-28: rest ~0; light hits 170..220,
+                                   * medium 300..740, hard 900..984; 760 and 880 put every hard hit at 127; the factory
+                                   * record's curves end at 950 and start at 220: every light hit was 1) */
+static uint32_t smk__pad_vel(uint32_t p, uint32_t peak)   /* straight from where a hit starts to SMK_PAD_TOP */
+{
+    uint32_t lo = fm1_in.pad_base[p] + SMK_PAD_ON;      /* (the stock firmware too keeps the record's pad curves */
+    (void)smk_trim_pad;                                 /* out of the velocity: issue #6) */
+    if (peak <= lo)
+        return 1;
+    if (peak >= SMK_PAD_TOP || lo >= SMK_PAD_TOP)
+        return 127;
+    return 1u + 126u * (peak - lo) / (SMK_PAD_TOP - lo);
+}
+
 static int smk__pad_echo(uint32_t p)      /* another pad hit at the same time, far harder: p only picked it up */
 {
     uint32_t q, ex = fm1_in.pad_peak[p] > fm1_in.pad_base[p] ? fm1_in.pad_peak[p] - fm1_in.pad_base[p] : 0u;
@@ -553,7 +567,7 @@ static void smk__pad(uint32_t p, uint32_t raw)
         fm1_in.pad_st[p] = 0x80;
         fm1_in.pad_low[p] = 0;
         if (!smk__pad_echo(p))                              /* (an echo: no hit; its release is harmless) */
-            smk__padq(p, smk_vel7(smk_curve(smk_trim_pad[p], fm1_in.pad_peak[p])));
+            smk__padq(p, smk__pad_vel(p, fm1_in.pad_peak[p]));
         return;
     }
     fm1_in.pad_press[p] = (uint8_t)(raw <= 0x200u ? raw >> 4 : (raw - 0x200u) / 4u + 32u > 127u ? 127u

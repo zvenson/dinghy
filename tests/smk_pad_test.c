@@ -106,7 +106,7 @@ int main(void)
 
     {   /* a slow strike: the rubber takes 6 readings (~14 ms) to its peak; the velocity is the peak's */
         static const uint16_t SLOW[] = {200, 300, 420, 520, 600, 640, 600, 400, 200, 110, 104, 103, 102};
-        uint32_t want = smk_vel7(smk_curve(smk_trim_pad[0], 640));
+        uint32_t want = smk__pad_vel(0, 640);
         feed(SLOW, sizeof SLOW / 2u);
         rest(40);
         expect("a slow strike", 1);
@@ -131,6 +131,24 @@ int main(void)
         for (n = 0; (e = smk_pad_take()) >= 0;) if (e & 0x7F) n++;
         printf("%-58s %u hits%s\n", "pads 14 and 6 hit together, alike", n, n == 2u ? "  ok" : "  FAIL");
         if (n != 2u) fails++;
+    }
+
+    {   /* a light tap: not 1 (the factory curve, 220..950, made every light tap 1) */
+        static const uint16_t TAP[] = {150, 175, 190, 170, 130, 104, 103, 102, 101, 100};
+        feed(TAP, sizeof TAP / 2u);
+        rest(40);
+        expect("a light tap (peak 190, the baseline 100)", 1);
+        printf("%-58s vel %u%s\n", "  ... its velocity", last_vel, last_vel > 1u ? "  ok" : "  FAIL");
+        if (last_vel <= 1u) fails++;
+    }
+
+    {   /* the hardest hit reaches 127 (a unit's hardest: up to 984) */
+        static const uint16_t FULL[] = {400, 900, 1010, 700, 300, 104, 103, 102, 101, 100};
+        feed(FULL, sizeof FULL / 2u);
+        rest(40);
+        expect("a full hit (peak 1010)", 1);
+        printf("%-58s vel %u%s\n", "  ... its velocity", last_vel, last_vel == 127u ? "  ok" : "  FAIL");
+        if (last_vel != 127u) fails++;
     }
 
     printf(fails ? "FAILED\n" : "pads: one hit per strike\n");
