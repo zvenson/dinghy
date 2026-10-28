@@ -23,8 +23,10 @@ static void app_idle(void);
 #endif
 
 /* ---- the sound (runs in the audio ISR: keep it short, no flash, no screen) */
-#define NV 4u                                   /* voices */
-static struct {
+#define NV 2u                                   /* Polivoks duophonic voices */
+#define MAX_HELD 10
+static uint8_t held_notes[MAX_HELD];
+static uint32_t num_held = 0;static struct {
     volatile uint32_t inc;                      /* phase step per frame: f * 2^32 / 44100 (unbent) */
     volatile int32_t gate;                      /* target level, Q15: 0 = released */
     int32_t amp;                                /* the level now: glides to gate, no clicks */
@@ -68,37 +70,86 @@ static void app_audio(int32_t *out, uint32_t n)
 static const uint32_t INC_C9[12] = {            /* MIDI 120..131 (C9..B9); lower octaves shift right */
     815363807u, 863847862u, 915214929u, 969636441u, 1027294024u, 1088380105u,
     1153098554u, 1221665363u, 1294309365u, 1371273005u, 1452813141u, 1539201906u};
-static uint32_t ages, last_note = 255;
 
+static uint32_t last_note = 255;
+
+// 1. The Polivoks Brain
+static void update_voice_routing(uint32_t vel)
+{
+    if (num_held == 0) {
+        voice[0].gate = 0; // Release envelopes
+        voice[1].gate = 0;
+        return;
+    }
+
+    uint8_t note1, note2;
+    
+    if (num_held == 1) {
+        // Monophonic: Both oscillators play the same fat note
+        note1 = held_notes[0];
+        note2 = held_notes[0];
+    } else {
+        // Duophonic: Scan for lowest and highest keys
+        uint8_t lowest = 127, highest = 0;
+        for (uint32_t i = 0; i < num_held; i++) {
+            if (held_notes[i] < lowest) lowest = held_notes[i];
+            if (held_notes[i] > highest) highest = held_notes[i];
+        }
+        note1 = lowest;
+        note2 = highest;
+    }
+
+    // Assign notes and look up the integer phase increment for the pitch
+    voice[0].note = note1;
+    voice[1].note = note2;
+    voice[0].inc = INC_C9[note1 % 12u] >> (10u - note1 / 12u);
+    voice[1].inc = INC_C9[note2 % 12u] >> (10u - note2 / 12u);
+
+    // Only trigger the attack if a new key was actually pressed
+    if (vel) {
+        int32_t target_gate = (int32_t)(vel * 90u);
+        voice[0].gate = target_gate;
+        voice[1].gate = target_gate;
+    }
+}
+
+// 2. The MIDI/Key Handlers
 static void play(uint32_t note, uint32_t vel)
 {
-    uint32_t v, pick = 0, best = 0xFFFFFFFFu;
     if (note > 127u || !vel) return;
-    for (v = 0; v < NV; v++) {                  /* the same note, else a free voice, else the oldest */
-        uint32_t score = voice[v].note == note && voice[v].gate ? 0u
-                       : voice[v].gate ? 0x80000000u + voice[v].age : (uint32_t)voice[v].amp + 1u;
-        if (score < best) { best = score; pick = v; }
+    
+    // Prevent duplicate notes in the array
+    for (uint32_t i = 0; i < num_held; i++) {
+        if (held_notes[i] == note) return; 
     }
-    voice[pick].note = (uint8_t)note;
-    voice[pick].age = ++ages;
-    voice[pick].inc = INC_C9[note % 12u] >> (10u - note / 12u);
-    voice[pick].gate = (int32_t)(vel * 90u);    /* 127 -> 11430: four voices stay under full scale */
+    
+    if (num_held < MAX_HELD) {
+        held_notes[num_held++] = (uint8_t)note;
+        update_voice_routing(vel); // Trigger with velocity
+    }
     last_note = note;
 }
+
 static void stop(uint32_t note)
 {
-    uint32_t v;
-    for (v = 0; v < NV; v++)
-        if (voice[v].note == note)
-            voice[v].gate = 0;
+    for (uint32_t i = 0; i < num_held; i++) {
+        if (held_notes[i] == note) {
+            // Shift array to remove the released note
+            for (uint32_t j = i; j < num_held - 1; j++) {
+                held_notes[j] = held_notes[j + 1];
+            }
+            num_held--;
+            break;
+        }
+    }
+    update_voice_routing(0); // Update pitch without re-triggering attack
 }
-static int quiet(void)                          /* nothing sounds, not even a release */
+
+static int quiet(void)
 {
-    uint32_t v;
-    for (v = 0; v < NV; v++)
-        if (voice[v].gate || voice[v].amp) return 0;
-    return 1;
+    return !(voice[0].gate || voice[0].amp || voice[1].gate || voice[1].amp);
 }
+
 
 /* ---- the screen: the name, the last note big, the keyboard with what sounds, the octave */
 #define C_ACC RGB(180, 140, 255)                /* lilac, as the logo */
