@@ -39,6 +39,12 @@ jobs:
           done
           test -d ~/fw-AC79_AIoT_SDK
 
+  - name: Fetch WebAssembly Toolchain
+    run: |
+      wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-20/wasi-sdk-20.0-linux.tar.gz
+      tar xvf wasi-sdk-20.0-linux.tar.gz
+      sudo mv wasi-sdk-20.0 /opt/wasi-sdk
+
       - name: Build (the SMK-37 first, the FM-1 last, as the tests expect)
         run: |
           BOARD=smk37 sh build.sh
@@ -48,6 +54,11 @@ jobs:
 
       - name: Host tests
         run: sh tests/run_tests.sh
+
+  - name: Build Web Emulator
+    env:
+      WASI_SDK_PATH: /opt/wasi-sdk
+    run: python3 tools/build.py --web
 
       - name: Release packages (tags only)
         if: github.ref_type == 'tag'
@@ -60,11 +71,13 @@ jobs:
           ls -l build/dinghy-"$V"*.fwsc
           (cd build && sha256sum dinghy-"$V"*.fwsc > SHA256SUMS)
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dinghy-fwsc
-          path: build/dinghy*.fwsc
-          if-no-files-found: error
+  - uses: actions/upload-artifact@v4
+    with:
+      name: polivoks-builds
+      path: |
+        build/dinghy*.fwsc
+        build/web/*
+      if-no-files-found: error
 
       - name: Attest the packages (tags only)
         if: github.ref_type == 'tag'
