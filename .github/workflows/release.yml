@@ -58,7 +58,7 @@ jobs:
   - name: Build Web Emulator
     env:
       WASI_SDK_PATH: /opt/wasi-sdk
-    run: python3 tools/build.py --web
+    run: sh build.sh --sim
 
       - name: Release packages (tags only)
         if: github.ref_type == 'tag'
