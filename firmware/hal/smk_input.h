@@ -130,8 +130,11 @@ static volatile struct {
     int16_t enc_cnt[FM1_NENC];   /* transitions, + = B leads */
     int16_t enc_steps[FM1_NENC];
     uint16_t pad_raw[SMK_NPAD], pad_base[SMK_NPAD], pad_peak[SMK_NPAD];
-    uint8_t pad_st[SMK_NPAD];    /* 0 idle, 1..SMK_PAD_PEAKN collecting the peak, 0x80 on */
+    uint8_t pad_st[SMK_NPAD];    /* 0 idle, 1..SMK_PAD_PEAKMAX collecting the peak, 0x80 on */
     uint8_t pad_low[SMK_NPAD];
+    uint8_t pad_hold[SMK_NPAD];  /* after a release: quiet readings still needed before a new hit may start */
+    uint8_t pad_wait[SMK_NPAD];  /* readings since the release (a pad that reads high at rest re-arms anyway) */
+    uint16_t pad_t0[SMK_NPAD];   /* smk_pad_clock when the hit started (crosstalk) */
     uint8_t pad_press[SMK_NPAD]; /* pressure 0..127 while on */
     uint16_t fad_acc[4];         /* faders: 0..1023 IIR */
     uint8_t fader[4];            /* 0..127 */
@@ -444,7 +447,35 @@ static void fm1__frame(void)
 /* ---------------------------------------------------------------- analog --- */
 #define SMK_PAD_ON 24u            /* above the baseline: a hit starts */
 #define SMK_PAD_OFF 12u           /* below base + this: released */
-#define SMK_PAD_PEAKN 3u          /* samples (2.4 ms apart) for the peak */
+#define SMK_PAD_PEAKMAX 8u        /* the peak: readings (2.4 ms apart) while it still rises, at most this many (~17 ms;
+                                   * a fixed 3 caught a slow strike still rising: the stock firmware waits too) */
+#define SMK_PAD_RELN 4u           /* readings in a row below base + SMK_PAD_OFF: released (~10 ms) */
+#define SMK_PAD_HOLD 8u           /* then a new hit only after this many readings in a row below base + OFF (~19 ms):
+                                   * the rubber's rebound and a finger resting near the thresholds hit twice
+                                   * otherwise (the stock firmware waits 24 readings and averages 16; a unit,
+                                   * 2026-10-28: echoes 35 ms after light hits with a plain wait) */
+#define SMK_PAD_WAITMAX 167u      /* ... or ~400 ms after the release, whatever the reading */
+#define SMK_PAD_XWIN 6u           /* crosstalk: a hit started within this many readings (~14 ms) of another one ... */
+#define SMK_PAD_XRATIO 3u         /* ... and under a third of its height above the baseline is the other's echo (a
+                                   * unit, 2026-10-28: a bottom pad hit also hit the top pad on its mux address) */
+static uint16_t smk_pad_clock;            /* one tick per round of the 24 analog readings (2.4 ms) */
+
+static int smk__pad_echo(uint32_t p)      /* another pad hit at the same time, far harder: p only picked it up */
+{
+    uint32_t q, ex = fm1_in.pad_peak[p] > fm1_in.pad_base[p] ? fm1_in.pad_peak[p] - fm1_in.pad_base[p] : 0u;
+    for (q = 0; q < SMK_NPAD; q++) {
+        uint32_t eq;
+        if (q == p || !fm1_in.pad_st[q])
+            continue;
+        if ((uint16_t)(fm1_in.pad_t0[p] - fm1_in.pad_t0[q]) > SMK_PAD_XWIN &&
+            (uint16_t)(fm1_in.pad_t0[q] - fm1_in.pad_t0[p]) > SMK_PAD_XWIN)
+            continue;
+        eq = fm1_in.pad_peak[q] > fm1_in.pad_base[q] ? fm1_in.pad_peak[q] - fm1_in.pad_base[q] : 0u;
+        if (ex * SMK_PAD_XRATIO < eq)
+            return 1;
+    }
+    return 0;
+}
 
 static void smk__padq(uint32_t pad, uint32_t vel)     /* a pad hit (vel) or release (0): its white key */
 {
@@ -490,8 +521,18 @@ static void smk__pad(uint32_t p, uint32_t raw)
     uint32_t base = fm1_in.pad_base[p], st = fm1_in.pad_st[p];
     fm1_in.pad_raw[p] = (uint16_t)raw;
     if (st == 0u) {
-        if (raw > base + SMK_PAD_ON) {
+        if (fm1_in.pad_hold[p]) {
+            if (++fm1_in.pad_wait[p] >= SMK_PAD_WAITMAX)
+                fm1_in.pad_hold[p] = 0;
+            else if (raw < base + SMK_PAD_OFF)
+                fm1_in.pad_hold[p]--;
+            else
+                fm1_in.pad_hold[p] = SMK_PAD_HOLD;     /* not quiet yet: start over */
+            if (base > raw)
+                fm1_in.pad_base[p] = (uint16_t)(base - 1u);
+        } else if (raw > base + SMK_PAD_ON) {
             fm1_in.pad_st[p] = 1;
+            fm1_in.pad_t0[p] = smk_pad_clock;
             fm1_in.pad_peak[p] = (uint16_t)raw;
         } else if (base > raw) {
             fm1_in.pad_base[p] = (uint16_t)(base - 1u);     /* the baseline follows (stock) */
@@ -500,23 +541,28 @@ static void smk__pad(uint32_t p, uint32_t raw)
         }
         return;
     }
-    if (st < 0x80u) {                                       /* the peak of the first samples */
+    if (st < 0x80u) {                                       /* the peak: until the reading falls */
         if (raw > fm1_in.pad_peak[p])
             fm1_in.pad_peak[p] = (uint16_t)raw;
-        if (++st < SMK_PAD_PEAKN) {
+        else if (st >= 2u)
+            st = SMK_PAD_PEAKMAX;                           /* (it falls: the peak has passed) */
+        if (++st < SMK_PAD_PEAKMAX) {
             fm1_in.pad_st[p] = (uint8_t)st;
             return;
         }
         fm1_in.pad_st[p] = 0x80;
         fm1_in.pad_low[p] = 0;
-        smk__padq(p, smk_vel7(smk_curve(smk_trim_pad[p], fm1_in.pad_peak[p])));
+        if (!smk__pad_echo(p))                              /* (an echo: no hit; its release is harmless) */
+            smk__padq(p, smk_vel7(smk_curve(smk_trim_pad[p], fm1_in.pad_peak[p])));
         return;
     }
     fm1_in.pad_press[p] = (uint8_t)(raw <= 0x200u ? raw >> 4 : (raw - 0x200u) / 4u + 32u > 127u ? 127u
                                                                       : (raw - 0x200u) / 4u + 32u);
     if (raw < base + SMK_PAD_OFF) {
-        if (++fm1_in.pad_low[p] >= 2u) {
+        if (++fm1_in.pad_low[p] >= SMK_PAD_RELN) {
             fm1_in.pad_st[p] = 0;
+            fm1_in.pad_hold[p] = SMK_PAD_HOLD;
+            fm1_in.pad_wait[p] = 0;
             fm1_in.pad_press[p] = 0;
             smk__padq(p, 0);
         }
@@ -528,6 +574,8 @@ static void smk__pad(uint32_t p, uint32_t raw)
 static void smk__analog(uint32_t slot, uint32_t raw)
 {
     uint32_t a = smk__slot_addr(slot), ch = slot % 3u;
+    if (slot == 0u)
+        smk_pad_clock++;
     if (ch == 0u) {
         smk__pad(SMK_PADMUX[a], raw);
     } else if (ch == 1u) {
