@@ -463,6 +463,7 @@ void fm1_cstart(void)
     fm1_mailbox_clear();
     fm1_guard_enable(FM1_GUARD_STACK | FM1_GUARD_WRITE | FM1_GUARD_BUS | FM1_GUARD_PC);
     fm1_boot.p3_rst = (uint8_t)p3;
+    fm1_lcd_hw_init();                          /* before the OCT- check: no key reads until the screen's pins are set (PA2) */
     if (boot_mode == BOOT_RECOVERY || recovery_key())
         recovery_main();                        /* OCT- at power-on: the USB rescue */
 #if BOARD_SMK37
