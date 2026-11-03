@@ -17,7 +17,9 @@
  * ID: 0xeb6014"). The driver uses only generic SPI NOR commands (9F, 05/35, 06, 20, 02, 0B). */
 #define FL_JEDEC_OK(id) ((id) == 0xEB6014u || (id) == 0x856014u)
 #else
-#define FL_JEDEC_OK(id) ((id) == 0x856014u)
+/* FM-1: the Puya P25Q80 (0x856014); newer units from AliExpress carry a UC25HQ80 (0xB36014, 1 MiB, the same generic SPI NOR
+ * commands – OberVave 3.3.1, 2026-11): without it they save to RAM only. */
+#define FL_JEDEC_OK(id) ((id) == 0x856014u || (id) == 0xB36014u)
 #endif
 
 #if BOARD_SMK37
