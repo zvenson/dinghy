@@ -22,7 +22,7 @@ run "FM-1 app on the host: the default script plays, screens and sound" sh tests
 run "SMK-37 app on the host: the default script" env BOARD=smk37 sh tests/run_host.sh
 run "FM-1 MIDI: USB, the TRS jack, a clock, the channel" sh tests/run_host.sh tests/scripts/midi.txt
 run "SMK-37: velocity, a pad, an outer key, the pitch wheel" env BOARD=smk37 sh tests/run_host.sh tests/scripts/smk37.txt
-run "RDPNO: a chord, the PLAY pedal, PRESETS, a program change to a 32 kHz patch" sh tests/run_host.sh tests/scripts/rdpno.txt
+run "RDPNO: a chord, the PLAY pedal, the HOME / FX / ENV pages, PRESETS, a program change, the channel" sh tests/run_host.sh tests/scripts/rdpno.txt
 $CC -Ifirmware/src -Ifirmware/gen -Itests -o "$OUT/rdp_test" tests/rdp_test.c
 run "RdPiano core (rdp.c): notes, pedal, patch changes, 18 notes on 16 voices" "$OUT/rdp_test" "$OUT/rdp_test.raw"
 if [ -d "${RDPIANO:-../rdpiano}/librdpiano/src" ]; then

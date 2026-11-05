@@ -1,20 +1,23 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* RDPNO: Roland's SA pianos (the MK-80 by default; MKS-20) on the M-VAVE FM-1, after rdpiano by Giulio Zausa.
- * rdp.c emulates the board (its CPU and the SA chip, from the ROMs: tools/pack_roms.py); this file plays it.
- * Built on Dinghy (zvenson/dinghy): platform.c does the rest (updates, USB rescue, MIDI, USB audio, the panel).
+/* RDPNO: Roland's SA pianos (the MKS-20 by default; the Rhodes MK-80) on the M-VAVE FM-1, after rdpiano by
+ * Giulio Zausa. rdp.c emulates the board (its CPU and the SA chip, from the ROMs: tools/pack_roms.py), fx.c does
+ * what the MKS-20 does after it (voice level, equalizer, chorus, tremolo); this file is the panel, laid out after
+ * the MKS-20's front. Built on Dinghy (zvenson/dinghy): platform.c does the rest.
  *
- *   keys       play; the notes go out over USB-MIDI too, on the MIDI channel
- *   PRESETS    the patch (CLASSIC, SPECIAL, ...: the set pack_roms.py packed)   (kept in flash)
- *   SELECT     the MIDI channel: OMNI (in: all, out: 1) or 1..16                (kept in flash)
- *   KNOB 1     the velocity the keys play with (the FM-1's keys feel none)       (kept in flash)
- *   OCT- OCT+  the octave                                                        (kept in flash)
- *   PLAY       the sustain pedal, latched (lit while held down); CC 64 from MIDI works too
+ *   PRESETS    the voice (PIANO 1, ...)                     on every page
+ *   ALGORITHM  the MIDI receive channel: OMNI or 1..16      on every page
+ *   SELECT     the page: HOME -> FX -> ENV; or HOME, FX, ENV themselves
+ *   HOME       KNOB 1 voice level, 2 treble level, 3 bass level, 4 the keys' velocity (the FM-1 feels none)
+ *   FX         KNOB 1 tremolo rate, 2 tremolo depth, 3 chorus rate, 4 chorus depth (depth 0 = off)
+ *   ENV        KNOB 1 middle frequency, 2 middle level, 3 band width (the middle equalizer)
+ *   OCT- OCT+  the octave of the keys
+ *   PLAY       the sustain pedal, latched (lit while it is down); CC 64 from MIDI works too
  *   MASTER     the volume (platform.c)
- *   MIDI in    notes, CC 64 (sustain), program change (the patch)
- *   screen     the patch, the CPU load of the sound (now and its peak), the parts sounding (of 160)
+ *   MIDI in    notes, CC 64, program change (the voice), on USB and the TRS jack; the keys go out on USB too
+ * Everything but the pedal is kept in flash (2 s after the last change, once silent).
  *
- * The board runs at 20 kHz (two MK-80 patches at 32 kHz) inside the audio interrupt; a linear interpolation takes
- * it to 44.1 kHz. Integers only (docs/RULES.md). */
+ * The board runs at 20 kHz (some voices 32 kHz) inside the audio interrupt; a linear interpolation takes it to
+ * 44.1 kHz, then fx.c. Integers only (docs/RULES.md). */
 static void app_idle(void);
 #define LCD_IDLE app_idle                       /* while the screen's DMA runs: MIDI in (platform.c) */
 #ifndef APP_NAME
@@ -22,8 +25,9 @@ static void app_idle(void);
 #endif
 #include "platform.c"
 #include "rdp.c"
+#include "fx.c"
 
-/* ---- the sound: the board, resampled (audio interrupt) */
+/* ---- the sound: the board, resampled, then the effects (audio interrupt) */
 static volatile uint32_t rdp_ready;            /* rdp_init is done: render */
 static volatile uint32_t load_now, load_peak;   /* the render's share of the 5.8 ms a block, in 1/1000 */
 static int32_t rs_prev, rs_cur;                 /* the board's last two samples */
@@ -36,10 +40,10 @@ static void app_audio(int32_t *out, uint32_t n)
     uint32_t t0 = fm1_ticks(), t;
 #endif
     if (!rdp_ready) return;
-    rdp_take();                                 /* a patch change the main loop has unpacked */
+    rdp_take();                                 /* a voice change the main loop has unpacked */
     step = rdp_khz32 ? 47554u : 29721u;         /* 32000 or 20000 * 65536 / 44100 */
     for (i = 0; i < n; i++) {
-        int32_t s;
+        int32_t s, l, r;
         while (rs_frac >= 65536u) {             /* the board's next sample */
             rs_frac -= 65536u;
             rs_prev = rs_cur;
@@ -47,8 +51,9 @@ static void app_audio(int32_t *out, uint32_t n)
         }
         s = rs_prev + (int32_t)(((int64_t)(rs_cur - rs_prev) * (int32_t)rs_frac) >> 16);
         rs_frac += step;
-        out[2u * i] += s;
-        out[2u * i + 1u] += s;
+        fx_process(s, &l, &r);
+        out[2u * i] += l;
+        out[2u * i + 1u] += r;
     }
 #ifndef DINGHY_HOST
     t = (fm1_ticks() - t0) / FM1_TICKS_PER_US;  /* us of the 5805 a block has */
@@ -57,24 +62,65 @@ static void app_audio(int32_t *out, uint32_t n)
 #endif
 }
 
-/* ---- the settings */
-static struct { uint8_t patch, ch, vel, oct; } set = {0, 0, 100, 0};
-#define KEY0 53u                                /* key 0 = F3 */
-static uint32_t sustain, last_note = 255, held_notes;   /* held_notes: bit k, key k sounds (the screen) */
-
-static void note_on(uint32_t note, uint32_t vel) { rdp_midi(0x90, note, vel); last_note = note; }
-static void note_off(uint32_t note) { rdp_midi(0x80, note, 0); }
-static void pedal(uint32_t on)
+/* ---- what is kept: the voice, MIDI, the keys, and the MKS-20's edit parameters */
+static struct {
+    uint8_t patch, ch, vel, oct, page;
+    fx_par_t fx;
+} set;
+static void set_defaults(void)
 {
-    sustain = on;
-    rdp_midi(0xB0, 64, on ? 127u : 0u);
+    set.patch = 0; set.ch = 0; set.vel = 100; set.oct = 0; set.page = 0;
+    set.fx.vol = 15; set.fx.bass = 8; set.fx.treble = 8; set.fx.mid_level = 8; set.fx.mid_freq = 5;
+    set.fx.width = 3; set.fx.cho_rate = 8; set.fx.cho_depth = 0; set.fx.trm_rate = 8; set.fx.trm_depth = 0;
+}
+static int set_ok(void)
+{
+    const fx_par_t *f = &set.fx;
+    return set.patch < RDP_NPATCH && set.ch <= 16u && set.vel && set.vel <= 127u && (int8_t)set.oct >= -2 &&
+           (int8_t)set.oct <= 2 && set.page < 3u && f->vol <= 15u && f->bass < FX_NLEVEL && f->treble < FX_NLEVEL &&
+           f->mid_level < FX_NLEVEL && f->mid_freq < FX_NMIDF && f->width < FX_NWIDTH && f->cho_rate &&
+           f->cho_rate <= 15u && f->cho_depth <= 15u && f->trm_rate && f->trm_rate <= 15u && f->trm_depth <= 15u;
 }
 
-/* ---- the screen */
-#define C_ACC RGB(255, 150, 60)                 /* a warm orange: an old Rhodes' panel light */
-#define C_KEY RGB(210, 210, 210)
-#define C_OFF RGB(90, 90, 90)
-static int black(uint32_t note) { return (0x54Au >> (note % 12u)) & 1u; }
+#define KEY0 53u                                /* key 0 = F3 */
+static uint32_t sustain;
+static void note_on(uint32_t note, uint32_t vel) { rdp_midi(0x90, note, vel); }
+static void note_off(uint32_t note) { rdp_midi(0x80, note, 0); }
+static void pedal(uint32_t on) { sustain = on; rdp_midi(0xB0, 64, on ? 127u : 0u); }
+
+/* ---- the pages: four knob rows each */
+enum { PG_HOME, PG_FX, PG_ENV, PG_N };
+enum { V_VOL, V_TREBLE, V_BASS, V_VEL, V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH, V_MFREQ, V_MLEVEL, V_WIDTH, V_NONE };
+static const char *const PAGE_NAME[PG_N] = {"HOME", "FX: TREMOLO / CHORUS", "ENV: MIDDLE EQ"};
+static const uint8_t PAGE_ROW[PG_N][4] = {
+    {V_VOL, V_TREBLE, V_BASS, V_VEL}, {V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH}, {V_MFREQ, V_MLEVEL, V_WIDTH, V_NONE}};
+static const char *const VAL_NAME[V_NONE] = {"VOICE LEVEL", "TREBLE LEVEL", "BASS LEVEL", "KEY VELOCITY",
+    "TREMOLO RATE", "TREMOLO DEPTH", "CHORUS RATE", "CHORUS DEPTH", "MIDDLE FREQ", "MIDDLE LEVEL", "BAND WIDTH"};
+
+static uint8_t *val_ptr(uint32_t v)
+{
+    switch (v) {
+    case V_VOL: return &set.fx.vol;
+    case V_TREBLE: return &set.fx.treble;
+    case V_BASS: return &set.fx.bass;
+    case V_VEL: return &set.vel;
+    case V_TRATE: return &set.fx.trm_rate;
+    case V_TDEPTH: return &set.fx.trm_depth;
+    case V_CRATE: return &set.fx.cho_rate;
+    case V_CDEPTH: return &set.fx.cho_depth;
+    case V_MFREQ: return &set.fx.mid_freq;
+    case V_MLEVEL: return &set.fx.mid_level;
+    default: return &set.fx.width;
+    }
+}
+static void val_turn(uint32_t v, int32_t e)     /* a knob turned e detents */
+{
+    static const uint8_t LO[V_NONE] = {0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0};
+    static const uint8_t HI[V_NONE] = {15, 16, 16, 127, 15, 15, 15, 15, FX_NMIDF - 1u, 16, FX_NWIDTH - 1u};
+    uint8_t *p = val_ptr(v);
+    int32_t x = (int32_t)*p + (v == V_VEL ? 4 * e : e);
+    *p = (uint8_t)(x < LO[v] ? LO[v] : x > HI[v] ? HI[v] : x);
+}
 
 static char *put(char *p, const char *s) { while (*s) *p++ = *s++; return p; }
 static char *put_u(char *p, uint32_t v)
@@ -85,62 +131,86 @@ static char *put_u(char *p, uint32_t v)
     while (n) *p++ = t[--n];
     return p;
 }
-
-static void draw_patch(void)
+static char *put_db(char *p, uint32_t lvl)      /* 0..16 -> "-12.0" .. "+12.0" in 1.5 dB steps */
 {
-    char s[40], *p = s;
-    p = put_u(p, set.patch + 1u); p = put(p, "/"); p = put_u(p, RDP_NPATCH); *p = 0;
-    draw_text_box(0, 58, 240, &FONT_S, s, C_OFF, 1);
-    draw_text_box(0, 80, 240, &FONT_S, RDP_PATCH[set.patch].name, C_WHITE, 1);
-    p = s; p = put(p, RDP_SET_NAME); p = put(p, "  "); p = put_u(p, RDP_PATCH[set.patch].khz); p = put(p, " kHz"); *p = 0;
-    draw_text_box(0, 102, 240, &FONT_S, s, C_OFF, 1);
+    int32_t t = ((int32_t)lvl - 8) * 15;        /* tenths of a dB */
+    uint32_t a = (uint32_t)(t < 0 ? -t : t);
+    *p++ = t < 0 ? '-' : t > 0 ? '+' : ' ';
+    p = put_u(p, a / 10u);
+    *p++ = '.';
+    *p++ = (char)('0' + a % 10u);
+    return put(p, " dB");
+}
+static void val_text(uint32_t v, char *p)
+{
+    uint32_t x = *val_ptr(v);
+    if (v == V_TREBLE || v == V_BASS || v == V_MLEVEL) p = put_db(p, x);
+    else if (v == V_MFREQ) { p = put_u(p, FX_MID_HZ[x]); p = put(p, " Hz"); }
+    else if (v == V_WIDTH) p = put_u(p, x + 1u);
+    else if ((v == V_TDEPTH || v == V_CDEPTH) && !x) p = put(p, "OFF");
+    else p = put_u(p, x);
+    *p = 0;
 }
 
+/* ---- the screen, as the MKS-20's: the voice on top, the page and its four knobs, then MIDI and the load */
+#define C_ACC RGB(90, 200, 230)                 /* the MKS-20's LCD blue */
+#define C_LED RGB(255, 70, 50)                  /* its indicator red */
+#define C_OFF RGB(110, 110, 110)
+#define ROW_Y(i) (82u + 24u * (i))
+
+static void draw_voice(void)
+{
+    char s[40], *p = s;
+    draw_text_box(0, 10, 240, &FONT_S, RDP_PATCH[set.patch].name, C_ACC, 1);
+    p = put(p, "VOICE "); p = put_u(p, RDP_PATCH[set.patch].num); p = put(p, "  "); p = put(p, RDP_SET_NAME);
+    p = put(p, "  "); p = put_u(p, RDP_PATCH[set.patch].khz); p = put(p, "kHz"); *p = 0;
+    draw_text_box(0, 32, 240, &FONT_S, s, C_OFF, 1);
+}
+static void draw_page(uint32_t page)
+{
+    draw_text_box(0, 56, 240, &FONT_S, PAGE_NAME[page], C_LED, 1);
+}
+static void draw_row(uint32_t i, uint32_t v, int hot)
+{
+    char s[24] = "", k[4] = "K1";
+    k[1] = (char)('1' + i);
+    if (v == V_NONE) {
+        draw_text_box(0, ROW_Y(i), 240, &FONT_S, "", C_OFF, 0);
+        return;
+    }
+    {
+        char lab[24], *p = lab;
+        p = put(p, k); p = put(p, " "); p = put(p, VAL_NAME[v]); *p = 0;
+        draw_text_box(8, ROW_Y(i), 150, &FONT_S, lab, hot ? C_WHITE : C_OFF, 0);
+    }
+    val_text(v, s);
+    draw_text_box(158, ROW_Y(i), 74, &FONT_S, s, hot ? C_WHITE : C_ACC, 2);
+}
+static void draw_midi(int32_t oct, uint32_t ch, uint32_t sus)
+{
+    char s[40], *p = s;
+    p = put(p, "MIDI RX-CH "); if (ch) p = put_u(p, ch); else p = put(p, "OMNI");
+    p = put(p, "  OCT "); *p++ = oct < 0 ? '-' : '+'; *p++ = (char)('0' + (oct < 0 ? -oct : oct));
+    if (sus) p = put(p, "  SUS");
+    *p = 0;
+    draw_text_box(0, 186, 240, &FONT_S, s, C_OFF, 1);
+}
 static void draw_load(uint32_t now, uint32_t peak, uint32_t parts)   /* the bar: now; the tick: the peak */
 {
     char s[40], *p = s;
     uint32_t w = now > 1000u ? 1000u : now, pk = peak > 1000u ? 1000u : peak;
-    cv_begin(240, 10, C_BLACK);
-    cv_rect(20, 2, 200, 6, RGB(40, 40, 40));
-    cv_rect(20, 2, (int32_t)(w * 200u / 1000u), 6, now > 800u ? RGB(255, 60, 60) : C_ACC);
-    cv_rect(20 + (int32_t)(pk * 199u / 1000u), 0, 2, 10, C_WHITE);
-    cv_blit(0, 132);
+    cv_begin(240, 8, C_BLACK);
+    cv_rect(20, 2, 200, 4, RGB(40, 40, 40));
+    cv_rect(20, 2, (int32_t)(w * 200u / 1000u), 4, now > 800u ? C_LED : C_ACC);
+    cv_rect(20 + (int32_t)(pk * 199u / 1000u), 0, 2, 8, C_WHITE);
+    cv_blit(0, 208);
     p = put(p, "CPU "); p = put_u(p, now / 10u); p = put(p, "%  PEAK "); p = put_u(p, peak / 10u);
     p = put(p, "%  PARTS "); p = put_u(p, parts); *p = 0;
-    draw_text_box(0, 146, 240, &FONT_S, s, C_OFF, 1);
-}
-
-static void draw_keys(uint32_t lit)             /* bit k: key k is down */
-{
-    uint32_t k, w = 0;
-    cv_begin(240, 40, C_BLACK);
-    for (k = 0; k < 27u; k++)
-        if (!black(KEY0 + k)) {
-            cv_rect(8 + (int32_t)w * 14, 0, 13, 40, lit >> k & 1u ? C_ACC : C_KEY);
-            w++;
-        }
-    for (k = 0, w = 0; k < 27u; k++)
-        if (black(KEY0 + k))
-            cv_rect(8 + (int32_t)w * 14 - 5, 0, 9, 24, lit >> k & 1u ? C_ACC : C_BLACK);
-        else
-            w++;
-    cv_blit(0, 170);
-}
-
-static void draw_status(int32_t oct, uint32_t ch, uint32_t vel, uint32_t sus)
-{
-    char s[48], *p = s;
-    p = put(p, "OCT "); *p++ = oct < 0 ? '-' : '+'; *p++ = (char)('0' + (oct < 0 ? -oct : oct));
-    p = put(p, "  VEL "); p = put_u(p, vel);
-    p = put(p, ch ? "  CH " : "  OMNI"); if (ch) p = put_u(p, ch);
-    if (sus) p = put(p, "  SUS");
-    *p = 0;
-    draw_text_box(0, 218, 240, &FONT_S, s, C_OFF, 1);
+    draw_text_box(0, 220, 240, &FONT_S, s, C_OFF, 1);
 }
 
 /* ---- MIDI in: from the main loop, and from app_idle while the screen draws (idle_ok) */
 static uint32_t idle_ok, want_patch = 0xFFu;
-
 static void midi_in(void)
 {
     uint8_t st, d1, d2;
@@ -161,29 +231,31 @@ static void app_idle(void)
 
 static void app_main(void)
 {
-    uint32_t prev = 0, k, t_change = 0, dirty = 0, t_load = 0, hold = 0, t_hold = 0;
-    uint32_t keys_drawn = ~0u, status_drawn = ~0u, patch_drawn = ~0u, load_drawn = ~0u;
+    static const uint8_t KNOB[4] = {ENC_KNOB1, ENC_KNOB2, ENC_KNOB3, ENC_KNOB4};
+    static const uint8_t PAGE_BTN[PG_N] = {BTN_HOME, BTN_FX, BTN_ENV};
+    uint32_t prev = 0, k, t_change = 0, dirty = 0, t_load = 0, hold = 0, t_hold = 0, hot = V_NONE;
+    uint32_t page_drawn = ~0u, patch_drawn = ~0u, midi_drawn = ~0u, load_drawn = ~0u, rows_drawn[4];
     uint8_t held[27] = {0};
 #if BOARD_SMK37
     uint8_t ext_note[FM1_NKEY] = {0};
     smk_pad_events = 1;                         /* the pads as events: taken and dropped (no use for them yet) */
 #endif
-    if (settings_load(&set, sizeof set) || set.patch >= RDP_NPATCH || set.ch > 16u || !set.vel || set.vel > 127u ||
-        (int8_t)set.oct < -2 || (int8_t)set.oct > 2)
-        set.patch = 0, set.ch = 0, set.vel = 100, set.oct = 0;
+    for (k = 0; k < 4u; k++) rows_drawn[k] = ~0u;
+    if (settings_load(&set, sizeof set) || !set_ok()) set_defaults();
+    fx_set(&set.fx);
 
     lcd_fill(0, 0, 240, 240, C_BLACK);
-    draw_text_box(0, 14, 240, &FONT_S, APP_NAME "  v" APP_VER, C_ACC, 1);
-    draw_text_box(0, 34, 240, &FONT_S, "SA PIANO, AFTER RDPIANO", C_OFF, 1);
+    draw_text_box(0, 100, 240, &FONT_S, APP_NAME "  v" APP_VER, C_ACC, 1);
     if (rdp_init(set.patch)) {                  /* (a broken rdp_rom.h: say so, stay in the main loop) */
-        draw_text_box(0, 100, 240, &FONT_S, "ROM DATA BROKEN", RGB(255, 60, 60), 1);
+        draw_text_box(0, 130, 240, &FONT_S, "ROM DATA BROKEN", C_LED, 1);
     } else {
         rs_frac = 65536u;
         rdp_ready = 1;
     }
+    lcd_fill(0, 0, 240, 240, C_BLACK);
 
     for (;;) {
-        uint32_t keys, down, up, rel, b, out_ch = set.ch ? set.ch - 1u : 0u, st;
+        uint32_t keys, down, up, rel, b, out_ch = set.ch ? set.ch - 1u : 0u, st, fx_dirty = 0;
         int32_t oct = (int8_t)set.oct, e;
         uint32_t base = (uint32_t)((int32_t)KEY0 + 12 * oct);
         platform_poll();
@@ -201,7 +273,6 @@ static void app_main(void)
             if (down >> k & 1u) { held[k] = (uint8_t)(base + k); note_on(held[k], vel); midi_send(0x90u | out_ch, held[k], vel); }
             if (up >> k & 1u) { note_off(held[k]); midi_send(0x80u | out_ch, held[k], 0); }
         }
-        held_notes = keys;
 #if BOARD_SMK37
         while ((e = smk_extkey_take()) >= 0) {  /* the keys left and right of the FM-1's 27 */
             uint32_t key = (uint32_t)e >> 8, vel = (uint32_t)e & 0x7Fu;
@@ -216,41 +287,62 @@ static void app_main(void)
         if (b & (1u << BTN_OCT_DOWN) && oct > -2) { set.oct = (uint8_t)(oct - 1); dirty = 1; t_change = fm1_ms; }
         if (b & (1u << BTN_OCT_UP) && oct < 2) { set.oct = (uint8_t)(oct + 1); dirty = 1; t_change = fm1_ms; }
         if (b & (1u << BTN_PLAY)) { pedal(!sustain); midi_send(0xB0u | out_ch, 64, sustain ? 127u : 0u); }
+        for (k = 0; k < PG_N; k++)
+            if (b & (1u << PAGE_BTN[k]) && set.page != k) { set.page = (uint8_t)k; hot = V_NONE; dirty = 1; t_change = fm1_ms; }
+        if ((e = fm1_enc_take(ENC_SELECT)) != 0) {
+            int32_t pg = ((int32_t)set.page + e) % (int32_t)PG_N;
+            set.page = (uint8_t)(pg < 0 ? pg + (int32_t)PG_N : pg);
+            hot = V_NONE; dirty = 1; t_change = fm1_ms;
+        }
         if ((e = fm1_enc_take(ENC_PRESETS)) != 0) {
             int32_t p = ((int32_t)set.patch + e) % (int32_t)RDP_NPATCH;
             want_patch = (uint32_t)(p < 0 ? p + (int32_t)RDP_NPATCH : p);
         }
-        if ((e = fm1_enc_take(ENC_SELECT)) != 0) {
+        if ((e = fm1_enc_take(ENC_ALGORITHM)) != 0) {
             int32_t c = (int32_t)set.ch + e;
             set.ch = (uint8_t)(c < 0 ? 0 : c > 16 ? 16 : c);
             dirty = 1; t_change = fm1_ms;
         }
-        if ((e = fm1_enc_take(ENC_KNOB1)) != 0) {
-            int32_t v = (int32_t)set.vel + e * 4;
-            set.vel = (uint8_t)(v < 1 ? 1 : v > 127 ? 127 : v);
-            dirty = 1; t_change = fm1_ms;
-        }
+        for (k = 0; k < 4u; k++)
+            if ((e = fm1_enc_take(KNOB[k])) != 0 && PAGE_ROW[set.page][k] != V_NONE) {
+                hot = PAGE_ROW[set.page][k];
+                val_turn(hot, e);
+                if (hot != V_VEL) fx_dirty = 1;
+                dirty = 1; t_change = fm1_ms;
+            }
+        if (fx_dirty) fx_set(&set.fx);
 
         midi_in();
         if (want_patch != 0xFFu && rdp_ready && rdp_select(want_patch) == 0) {   /* the render takes it next block */
             if (want_patch != set.patch) { set.patch = (uint8_t)want_patch; dirty = 1; t_change = fm1_ms; }
             want_patch = 0xFFu;
         }
-        rdp_poll();                             /* after a patch change: the board's reload commands */
+        rdp_poll();                             /* after a voice change: the board's reload commands */
 
         oct = (int8_t)set.oct;
         for (k = 0; k < 27u; k++)
-            fm1_led_key(KEY_LED(k), held_notes >> k & 1u);
+            fm1_led_key(KEY_LED(k), keys >> k & 1u);
+        for (k = 0; k < PG_N; k++)
+            fm1_led_key(PAGE_BTN[k], set.page == k);
         fm1_led_key(BTN_OCT_DOWN, oct < 0);
         fm1_led_key(BTN_OCT_UP, oct > 0);
         fm1_led_key(BTN_PLAY, sustain != 0);
 
         idle_ok = 1;                            /* the drawing below may read MIDI meanwhile (LCD_IDLE) */
-        if (held_notes != keys_drawn) { keys_drawn = held_notes; draw_keys(held_notes); }
-        if (set.patch != patch_drawn) { patch_drawn = set.patch; draw_patch(); }
-        if ((st = (uint32_t)(oct + 2) | set.ch << 4 | (uint32_t)set.vel << 9 | sustain << 16) != status_drawn) {
-            status_drawn = st;
-            draw_status(oct, set.ch, set.vel, sustain);
+        if (set.patch != patch_drawn) { patch_drawn = set.patch; draw_voice(); }
+        if (set.page != page_drawn) {
+            page_drawn = set.page;
+            draw_page(set.page);
+            for (k = 0; k < 4u; k++) rows_drawn[k] = ~0u;
+        }
+        for (k = 0; k < 4u; k++) {              /* a row: its value and whether it was the last one turned */
+            uint32_t v = PAGE_ROW[set.page][k];
+            st = v == V_NONE ? 0xFFFFu : (uint32_t)*val_ptr(v) | v << 8 | (uint32_t)(v == hot) << 12;
+            if (st != rows_drawn[k]) { rows_drawn[k] = st; draw_row(k, v, v == hot); }
+        }
+        if ((st = (uint32_t)(oct + 2) | set.ch << 4 | sustain << 9) != midi_drawn) {
+            midi_drawn = st;
+            draw_midi(oct, set.ch, sustain);
         }
         if (fm1_ms - t_load >= 250u) {          /* the load four times a second, and the highest of the last 2 s */
             uint32_t now = load_now, pk = load_peak, parts = rdp_active;
