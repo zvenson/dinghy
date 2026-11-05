@@ -5,8 +5,9 @@
 name: release
 
 # RDPNO: by hand only. The build needs Roland's ROMs (tools/pack_roms.py), which are not in this repository: the
-# step below takes them from rdpiano's repository, and the packages it makes contain them. Keep them to yourself
-# (the workflow's artifact is private to the repository's collaborators); do not publish them as a release.
+# step below takes them from rdpiano's repository, and the packages it makes contain them. In a public repository
+# every signed-in GitHub user can download a workflow's artifact: it is kept one day only, and never published as
+# a release. Download it right after the run.
 on:
   workflow_dispatch:
 
@@ -75,6 +76,7 @@ jobs:
           name: rdpno-fwsc
           path: build/rdpno*.fwsc
           if-no-files-found: error
+          retention-days: 1
 
       - name: Attest the packages (tags only)
         if: github.ref_type == 'tag'
