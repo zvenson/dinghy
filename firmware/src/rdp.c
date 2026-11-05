@@ -49,6 +49,9 @@ typedef union {
 #ifndef RDP_POOL
 #define RDP_POOL __attribute__((section(".pool")))
 #endif
+#ifndef RDP_FAST                                /* code the audio interrupt runs: in RAM (app.ld's .fast), not */
+#define RDP_FAST __attribute__((section(".fast")))   /* from the flash, whose 32 KB cache it would thrash */
+#endif
 
 /* ---- the SA sound chip (librdpiano SoundChip)
  * The same arithmetic, bit for bit, arranged for a small CPU: what depends only on what the board wrote (the
@@ -68,7 +71,7 @@ static sa_part_t sa[SA_NV][16];
 static u16 sa_live[SA_NV];                      /* bit p: part p sounds (not: env_value == 0 and env_dest == 0) */
 static u16 sa_zero[SA_NV];                      /* bit p: fell silent last sample: its sub phase goes to 0 */
 static u32 sa_vmask;                            /* bit v: voice v has a part in sa_live or sa_zero */
-static void sa_vmark(u32 vi) { if (sa_live[vi] | sa_zero[vi]) sa_vmask |= 1u << vi; else sa_vmask &= ~(1u << vi); }
+static RDP_FAST void sa_vmark(u32 vi) { if (sa_live[vi] | sa_zero[vi]) sa_vmask |= 1u << vi; else sa_vmask &= ~(1u << vi); }
 static u8 sa_irq_id, sa_irq;
 static volatile u32 rdp_active;                 /* parts that sounded in the last sample (the screen shows it) */
 
@@ -100,19 +103,19 @@ static const u32 SA_ENV[256] = {               /* librdpiano env_table: the enve
 static const u16 SA_ADDR[16] = {0x1e0, 0x080, 0x060, 0x04d, 0x040, 0x036, 0x02d, 0x026,   /* bits 5..8 of the sub phase */
                                 0x020, 0x01b, 0x016, 0x011, 0x00d, 0x00a, 0x006, 0x003};
 
-static u32 sa_step(u32 pitch)                   /* IC11: librdpiano phase_exp_table[pitch] */
+static RDP_FAST u32 sa_step(u32 pitch)                   /* IC11: librdpiano phase_exp_table[pitch] */
 {
     u32 oct = pitch >> 12;
     return oct < 12u ? (262144u + ((u32)RDP_PHASE13[pitch & 4095u] << 5)) >> (11u - oct) : 0u;
 }
 
-static s32 sa_exp(u32 t, u32 neg)               /* IC10: a 14-bit level -> a sample; librdpiano samples_exp_table */
+static RDP_FAST s32 sa_exp(u32 t, u32 neg)               /* IC10: a 14-bit level -> a sample; librdpiano samples_exp_table */
 {
     s32 v = (s32)(RDP_EXP[t & 1023u] >> (t >> 10));
     return neg ? ~v : v;
 }
 
-static void sa_write(u32 offset, u8 data)
+static RDP_FAST void sa_write(u32 offset, u8 data)
 {
     u32 vi = offset >> 8, pi = (offset >> 4) & 15u, field = offset & 7u;
     sa_part_t *p;
@@ -148,7 +151,7 @@ static void sa_write(u32 offset, u8 data)
     }
 }
 
-static s32 sa_update(void)                      /* one sample of all voices (SoundChip::update) */
+static RDP_FAST s32 sa_update(void)                      /* one sample of all voices (SoundChip::update) */
 {
     s32 result = 0;
     u32 vi, pi, active = 0, vm;
@@ -266,7 +269,7 @@ static u32 rdp_exact = 1;                      /* 1: 100 cycles a sample (the re
 /* the command queue to the board (librdpiano commands_queue): the main loop writes, the audio interrupt reads */
 static volatile u8 rdp_q[256];
 static volatile u32 rdp_qw, rdp_qr;
-static int rdp_q_empty(void) { return rdp_qw == rdp_qr; }
+static RDP_FAST int rdp_q_empty(void) { return rdp_qw == rdp_qr; }
 
 static u8 mcu_read(u32 addr);
 static void mcu_write(u32 addr, u8 data);
@@ -275,9 +278,9 @@ static void mcu_eat_cycles(void);
 static void mcu_take_trap(void);
 static void mcu_execute_one(void);
 static void mcu_set_input(int line, int state);
-static u32 RM16(u32 a) { return (u32)mcu_read(a) << 8 | mcu_read((a + 1u) & 0xFFFFu); }
-static void WM16(u32 a, PAIR *p) { mcu_write(a, p->b.h); mcu_write((a + 1u) & 0xFFFFu, p->b.l); }
-static void increment_counter(int amount) { m_icount -= amount; }
+static RDP_FAST u32 RM16(u32 a) { return (u32)mcu_read(a) << 8 | mcu_read((a + 1u) & 0xFFFFu); }
+static RDP_FAST void WM16(u32 a, PAIR *p) { mcu_write(a, p->b.h); mcu_write((a + 1u) & 0xFFFFu, p->b.l); }
+static RDP_FAST void increment_counter(int amount) { m_icount -= amount; }
 
 /* ---- the opcodes: rdpiano's mcu_ops.h (MAME m6800, BSD-3-Clause, Aaron Giles), as C functions */
 #define pPPC    m_ppc
@@ -470,7 +473,7 @@ HNZVC
 
 */
 
-#define OP_HANDLER(_name) static void op_##_name(void)
+#define OP_HANDLER(_name) static RDP_FAST void op_##_name(void)
 
 
 //OP_HANDLER( illegl1 )
@@ -2869,7 +2872,7 @@ static const u8 cycles_63701[256] =
 
 
 /* ---- the CPU around the opcodes (librdpiano Mcu) */
-static void mcu_enter_interrupt(u16 vector)
+static RDP_FAST void mcu_enter_interrupt(u16 vector)
 {
     int eat;
     if (m_wai_state & M6800_WAI) {
@@ -2887,10 +2890,10 @@ static void mcu_enter_interrupt(u16 vector)
     PCD = RM16(vector);
     increment_counter(eat);
 }
-static void mcu_take_trap(void) { mcu_enter_interrupt(0xFFEE); }
-static void mcu_eat_cycles(void) { if (m_icount > 0) increment_counter(m_icount); }
+static RDP_FAST void mcu_take_trap(void) { mcu_enter_interrupt(0xFFEE); }
+static RDP_FAST void mcu_eat_cycles(void) { if (m_icount > 0) increment_counter(m_icount); }
 
-static void mcu_check_irq_lines(void)
+static RDP_FAST void mcu_check_irq_lines(void)
 {
     if (m_nmi_pending) {
         m_wai_state &= ~M6800_SLP;
@@ -2905,7 +2908,7 @@ static void mcu_check_irq_lines(void)
     }
 }
 
-static void mcu_set_input(int line, int state)
+static RDP_FAST void mcu_set_input(int line, int state)
 {
     if (line == INPUT_LINE_NMI) {
         if (!m_nmi_state && state != CLEAR_LINE) m_nmi_pending = 1;
@@ -2923,7 +2926,7 @@ static void mcu_set_input(int line, int state)
     }
 }
 
-static u8 mcu_read(u32 addr)
+static RDP_FAST u8 mcu_read(u32 addr)
 {
     addr &= 0xFFFFu;
     if (addr >= 0xC000u) return rdp_prog[(addr - 0xC000u) & 0x1FFFu];
@@ -2954,7 +2957,7 @@ static u8 mcu_read(u32 addr)
     return 0xFF;
 }
 
-static void mcu_write(u32 addr, u8 data)
+static RDP_FAST void mcu_write(u32 addr, u8 data)
 {
     addr &= 0xFFFFu;
     if (addr == 0x03u) {                        /* port 2: the command was taken */
@@ -2979,7 +2982,7 @@ static void mcu_write(u32 addr, u8 data)
     }
 }
 
-static void mcu_execute_one(void)
+static RDP_FAST void mcu_execute_one(void)
 {
     u8 ireg;
     pPPC = pPC;
@@ -2989,7 +2992,7 @@ static void mcu_execute_one(void)
     increment_counter(cycles_63701[ireg]);
 }
 
-static void mcu_run_one(void)                   /* librdpiano Mcu::execute_run */
+static RDP_FAST void mcu_run_one(void)                   /* librdpiano Mcu::execute_run */
 {
     if (!rdp_q_empty()) mcu_set_input(M6801_TIN_LINE, ASSERT_LINE);
     if (sa_irq) mcu_set_input(M6800_IRQ_LINE, ASSERT_LINE);
@@ -3019,13 +3022,13 @@ static const u8 RDP_SCAN[23] = {0x0F, 0xA6, 0x50, 0x85, 0x01, 0x27, 0x06, 0xE6, 
                                 0x6F, 0x70, 0x0E, 0x08, 0x9C, 0x92, 0x25, 0xEB, 0x39, 0x7A};
 #define RDP_SCAN_PC 0xE379u
 
-static int mcu_quiet(void)                      /* nothing can interrupt the CPU before the next sample */
+static RDP_FAST int mcu_quiet(void)                      /* nothing can interrupt the CPU before the next sample */
 {
     return rdp_q_empty() && !sa_irq && m_irq_state[M6800_IRQ_LINE] == CLEAR_LINE && !m_nmi_pending &&
            (m_tcsr & (TCSR_EICI | TCSR_ICF)) != (TCSR_EICI | TCSR_ICF);
 }
 
-static void mcu_fast(void)                      /* the rest of the sample, while nothing can interrupt the CPU */
+static RDP_FAST void mcu_fast(void)                      /* the rest of the sample, while nothing can interrupt the CPU */
 {
     u32 x = X, cc = CC;
     while (m_icount > 0) {                      /* (one instruction a turn, as the interpreter: same stops) */
@@ -3114,7 +3117,7 @@ out:
     X = (u16)x; CC = (u8)cc;
 }
 
-static s32 rdp_render(void)                     /* one sample; the audio interrupt */
+static RDP_FAST s32 rdp_render(void)                     /* one sample; the audio interrupt */
 {
     s32 s = sa_update();
     int n = rdp_khz32 ? 62 : 100;
@@ -3180,7 +3183,7 @@ static int rdp_select(u32 i)                    /* main loop: 0 = queued (the re
     return 0;
 }
 
-static void rdp_take(void)                      /* audio interrupt, before rendering: a patch change that waits */
+static RDP_FAST void rdp_take(void)                      /* audio interrupt, before rendering: a patch change that waits */
 {
     u32 p = rdp_pending;
     if (!p) return;

@@ -35,7 +35,7 @@ volatile uint32_t rdp_load_sum, rdp_load_n;     /* and the sum over the blocks f
 static int32_t rs_prev, rs_cur;                 /* the board's last two samples */
 static uint32_t rs_frac;                        /* where between them, Q16 */
 
-static void app_audio(int32_t *out, uint32_t n)
+static RDP_FAST void app_audio(int32_t *out, uint32_t n)
 {
     uint32_t i, step;
 #ifndef DINGHY_HOST

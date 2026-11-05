@@ -21,7 +21,7 @@ MS="${EMU_MS:-3000}"
 CHORD8="400:PLAY,500:m903c64,520:m904064,540:m904364,560:m904864,580:m904c64,600:m905064,620:m905364,640:m905864"
 CHORD16="$CHORD8,700:m902b64,720:m902f64,740:m903264,760:m903764,780:m903b64,800:m903e64,820:m904564,840:m904a64"
 scene() {   # name, FM1_BENCH_KEYS
-    FM1_STRICT=1 FM1_DUMPRAM=build/emu_ram.bin FM1_BENCH_NOKEYS=1 FM1_BENCH_KEYS="$2" "$LIVE" --fwsc build/rdpno.fwsc \
+    FM1_STRICT=1 FM1_DUMPRAM=build/emu_ram.bin FM1_BENCH_KEYS="$2" "$LIVE" --fwsc build/rdpno.fwsc \
         --mhz 240 --bench "$MS" > build/emu_"$1".log 2>&1 || { echo "emu_load: $1 failed"; tail -5 build/emu_"$1".log; return 1; }
     python3 - "$1" $A <<'PY'
 import struct, sys

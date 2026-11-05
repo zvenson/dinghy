@@ -68,7 +68,7 @@ static void fx_set(const fx_par_t *p)
 typedef struct { int32_t ic1, ic2; } svf_s_t;
 static svf_s_t fx_sb, fx_sm, fx_st;
 
-static int32_t svf(const svf_c_t *c, svf_s_t *s, int32_t v0)
+static RDP_FAST int32_t svf(const svf_c_t *c, svf_s_t *s, int32_t v0)
 {
     int32_t v3 = v0 - s->ic2;
     int32_t v1 = (int32_t)(((int64_t)c->a1 * s->ic1 + (int64_t)c->a2 * v3) >> 24);
@@ -78,7 +78,7 @@ static int32_t svf(const svf_c_t *c, svf_s_t *s, int32_t v0)
     return (int32_t)(((int64_t)c->m0 * v0 + (int64_t)c->m1 * v1 + (int64_t)c->m2 * v2) >> 24);
 }
 
-static int32_t fx_sine(uint32_t ph)             /* a full cycle over 2^32 -> -32767..32767 (Dinghy's parabola) */
+static RDP_FAST int32_t fx_sine(uint32_t ph)             /* a full cycle over 2^32 -> -32767..32767 (Dinghy's parabola) */
 {
     int32_t x = (int32_t)ph >> 16, ax = x < 0 ? -x : x, y, ay;
     y = (x * (32768 - ax)) >> 13;
@@ -92,7 +92,7 @@ static int32_t fx_sine(uint32_t ph)             /* a full cycle over 2^32 -> -32
 static int16_t fx_dl[FX_DLEN];
 static uint32_t fx_dw, fx_cho_ph, fx_trm_ph;
 
-static int32_t fx_tap(uint32_t lfo, uint32_t amp)   /* the delay line read at 6 ms +- amp, lfo a triangle */
+static RDP_FAST int32_t fx_tap(uint32_t lfo, uint32_t amp)   /* the delay line read at 6 ms +- amp, lfo a triangle */
 {
     uint32_t tri = (lfo & 0x80000000u ? ~lfo : lfo) >> 15;   /* 0..65535 */
     int32_t d = (int32_t)FX_BASE + (int32_t)((int64_t)(int32_t)amp * ((int32_t)tri - 32768) >> 15);
@@ -101,7 +101,7 @@ static int32_t fx_tap(uint32_t lfo, uint32_t amp)   /* the delay line read at 6 
     return a + (((b - a) * (int32_t)fr) >> 8);
 }
 
-static void fx_process(int32_t x, int32_t *l, int32_t *r)
+static RDP_FAST void fx_process(int32_t x, int32_t *l, int32_t *r)
 {
     const fx_c_t *c = &fx_cs[fx_cur];
     int32_t yl, yr;
