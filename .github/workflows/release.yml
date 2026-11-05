@@ -10,6 +10,8 @@ name: release
 # a release. Download it right after the run.
 on:
   workflow_dispatch:
+  push:
+    branches: [build]          # (a push to the branch "build" builds too: no button needed)
 
 jobs:
   firmware:
