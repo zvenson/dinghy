@@ -5,10 +5,13 @@
 name: release
 
 # RDPNO: by hand only. The build needs Roland's ROMs (tools/pack_roms.py), which are not in this repository: the
-# step below takes them from rdpiano's repository, and the packages it makes contain them. Keep them to yourself
-# (the workflow's artifact is private to the repository's collaborators); do not publish them as a release.
+# step below takes them from rdpiano's repository, and the packages it makes contain them. In a public repository
+# every signed-in GitHub user can download a workflow's artifact: it is kept one day only, and never published as
+# a release. Download it right after the run.
 on:
   workflow_dispatch:
+  push:
+    branches: [build]          # (a push to the branch "build" builds too: no button needed)
 
 jobs:
   firmware:
@@ -50,6 +53,12 @@ jobs:
           BOARD=smk37 MODEL=mke sh build.sh
           sh build.sh
 
+      - name: CPU load on fm1-emu (strict, 240 MHz)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libasound2-dev libudev-dev libx11-dev libxkbcommon-dev \
+              libwayland-dev libxcursor-dev libxrandr-dev libxi-dev pkg-config >/dev/null
+          sh tools/emu_load.sh ../fm1-emu || echo "::warning title=fm1-emu::the load measurement did not run"
+
       - name: Host tests
         run: sh tests/run_tests.sh
 
@@ -69,6 +78,7 @@ jobs:
           name: rdpno-fwsc
           path: build/rdpno*.fwsc
           if-no-files-found: error
+          retention-days: 1
 
       - name: Attest the packages (tags only)
         if: github.ref_type == 'tag'

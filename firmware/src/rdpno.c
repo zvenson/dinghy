@@ -30,10 +30,12 @@ static void app_idle(void);
 /* ---- the sound: the board, resampled, then the effects (audio interrupt) */
 static volatile uint32_t rdp_ready;            /* rdp_init is done: render */
 static volatile uint32_t load_now, load_peak;   /* the render's share of the 5.8 ms a block, in 1/1000 */
+volatile uint32_t rdp_load_max, rdp_parts_max;  /* the highest since boot (tools/emu_load.sh reads them) */
+volatile uint32_t rdp_load_sum, rdp_load_n;     /* and the sum over the blocks from 1.5 s on, for a mean */
 static int32_t rs_prev, rs_cur;                 /* the board's last two samples */
 static uint32_t rs_frac;                        /* where between them, Q16 */
 
-static void app_audio(int32_t *out, uint32_t n)
+static RDP_FAST void app_audio(int32_t *out, uint32_t n)
 {
     uint32_t i, step;
 #ifndef DINGHY_HOST
@@ -59,6 +61,9 @@ static void app_audio(int32_t *out, uint32_t n)
     t = (fm1_ticks() - t0) / FM1_TICKS_PER_US;  /* us of the 5805 a block has */
     load_now = t * 1000u / 5805u;
     if (load_now > load_peak) load_peak = load_now;
+    if (load_now > rdp_load_max && fm1_ms > 1500u) rdp_load_max = load_now;
+    if (fm1_ms > 1500u) { rdp_load_sum += load_now; rdp_load_n++; }
+    if (rdp_active > rdp_parts_max) rdp_parts_max = rdp_active;
 #endif
 }
 
@@ -234,7 +239,7 @@ static void app_main(void)
     static const uint8_t KNOB[4] = {ENC_KNOB1, ENC_KNOB2, ENC_KNOB3, ENC_KNOB4};
     static const uint8_t PAGE_BTN[PG_N] = {BTN_HOME, BTN_FX, BTN_ENV};
     uint32_t prev = 0, k, t_change = 0, dirty = 0, t_load = 0, hold = 0, t_hold = 0, hot = V_NONE;
-    uint32_t page_drawn = ~0u, patch_drawn = ~0u, midi_drawn = ~0u, load_drawn = ~0u, rows_drawn[4];
+    uint32_t page_drawn = ~0u, patch_drawn = ~0u, midi_drawn = ~0u, load_drawn = ~0u, rows_drawn[4], leds_set = ~0u;
     uint8_t held[27] = {0};
 #if BOARD_SMK37
     uint8_t ext_note[FM1_NKEY] = {0};
@@ -320,13 +325,16 @@ static void app_main(void)
         rdp_poll();                             /* after a voice change: the board's reload commands */
 
         oct = (int8_t)set.oct;
-        for (k = 0; k < 27u; k++)
-            fm1_led_key(KEY_LED(k), keys >> k & 1u);
-        for (k = 0; k < PG_N; k++)
-            fm1_led_key(PAGE_BTN[k], set.page == k);
-        fm1_led_key(BTN_OCT_DOWN, oct < 0);
-        fm1_led_key(BTN_OCT_UP, oct > 0);
-        fm1_led_key(BTN_PLAY, sustain != 0);
+        if ((st = keys | (uint32_t)set.page << 27 | (uint32_t)(oct + 2) << 29 | sustain << 31) != leds_set) {
+            for (k = 0; k < 27u; k++)           /* the LEDs: only when something changed (each costs) */
+                if (((st ^ leds_set) >> k & 1u) || leds_set == ~0u) fm1_led_key(KEY_LED(k), keys >> k & 1u);
+            for (k = 0; k < PG_N; k++)
+                fm1_led_key(PAGE_BTN[k], set.page == k);
+            fm1_led_key(BTN_OCT_DOWN, oct < 0);
+            fm1_led_key(BTN_OCT_UP, oct > 0);
+            fm1_led_key(BTN_PLAY, sustain != 0);
+            leds_set = st;
+        }
 
         idle_ok = 1;                            /* the drawing below may read MIDI meanwhile (LCD_IDLE) */
         if (set.patch != patch_drawn) { patch_drawn = set.patch; draw_voice(); }

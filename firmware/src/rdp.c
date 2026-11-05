@@ -49,6 +49,9 @@ typedef union {
 #ifndef RDP_POOL
 #define RDP_POOL __attribute__((section(".pool")))
 #endif
+#ifndef RDP_FAST                                /* code the audio interrupt runs: in RAM (app.ld's .fast), not */
+#define RDP_FAST __attribute__((section(".fast")))   /* from the flash, whose 32 KB cache it would thrash */
+#endif
 
 /* ---- the SA sound chip (librdpiano SoundChip)
  * The same arithmetic, bit for bit, arranged for a small CPU: what depends only on what the board wrote (the
@@ -67,6 +70,8 @@ typedef struct {
 static sa_part_t sa[SA_NV][16];
 static u16 sa_live[SA_NV];                      /* bit p: part p sounds (not: env_value == 0 and env_dest == 0) */
 static u16 sa_zero[SA_NV];                      /* bit p: fell silent last sample: its sub phase goes to 0 */
+static u32 sa_vmask;                            /* bit v: voice v has a part in sa_live or sa_zero */
+static RDP_FAST void sa_vmark(u32 vi) { if (sa_live[vi] | sa_zero[vi]) sa_vmask |= 1u << vi; else sa_vmask &= ~(1u << vi); }
 static u8 sa_irq_id, sa_irq;
 static volatile u32 rdp_active;                 /* parts that sounded in the last sample (the screen shows it) */
 
@@ -98,19 +103,19 @@ static const u32 SA_ENV[256] = {               /* librdpiano env_table: the enve
 static const u16 SA_ADDR[16] = {0x1e0, 0x080, 0x060, 0x04d, 0x040, 0x036, 0x02d, 0x026,   /* bits 5..8 of the sub phase */
                                 0x020, 0x01b, 0x016, 0x011, 0x00d, 0x00a, 0x006, 0x003};
 
-static u32 sa_step(u32 pitch)                   /* IC11: librdpiano phase_exp_table[pitch] */
+static RDP_FAST u32 sa_step(u32 pitch)                   /* IC11: librdpiano phase_exp_table[pitch] */
 {
     u32 oct = pitch >> 12;
     return oct < 12u ? (262144u + ((u32)RDP_PHASE13[pitch & 4095u] << 5)) >> (11u - oct) : 0u;
 }
 
-static s32 sa_exp(u32 t, u32 neg)               /* IC10: a 14-bit level -> a sample; librdpiano samples_exp_table */
+static RDP_FAST s32 sa_exp(u32 t, u32 neg)               /* IC10: a 14-bit level -> a sample; librdpiano samples_exp_table */
 {
     s32 v = (s32)(RDP_EXP[t & 1023u] >> (t >> 10));
     return neg ? ~v : v;
 }
 
-static void sa_write(u32 offset, u8 data)
+static RDP_FAST void sa_write(u32 offset, u8 data)
 {
     u32 vi = offset >> 8, pi = (offset >> 4) & 15u, field = offset & 7u;
     sa_part_t *p;
@@ -131,6 +136,7 @@ static void sa_write(u32 offset, u8 data)
         if (pi < SA_NP) {
             if (p->env_value || data) sa_live[vi] |= (u16)(1u << pi);
             else sa_live[vi] &= (u16)~(1u << pi);
+            sa_vmark(vi);
         }
         break;
     case 5:
@@ -145,69 +151,108 @@ static void sa_write(u32 offset, u8 data)
     }
 }
 
-static s32 sa_update(void)                      /* one sample of all voices (SoundChip::update) */
+static const u8 SA_LOW[1024] = {                /* the lowest set bit of a 10-bit mask (the next part to do) */
+    0,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    7,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    8,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    7,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    9,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    7,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    8,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    7,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+};
+static RDP_FAST s32 sa_update(void)             /* one sample of all voices (SoundChip::update) */
 {
     s32 result = 0;
-    u32 vi, pi, active = 0;
-    for (vi = 0; vi < SA_NV; vi++) {
-        u32 live = sa_live[vi], f0, f1, gone = 0;
+    u32 vi, active = 0, vm;
+    for (vi = 0, vm = sa_vmask; vm; vi++, vm >>= 1) {   /* the voices with something to do */
+        u32 live, m0, m1, gone = 0, todo;
+        if (!(vm & 1u)) continue;
+        live = sa_live[vi];
         if (sa_zero[vi]) {                      /* librdpiano zeroes a silent part's sub phase when it skips it */
-            u32 z = sa_zero[vi] & ~live;
+            u32 z = sa_zero[vi] & ~live, pi;
             for (pi = 0; z; pi++, z >>= 1)
                 if (z & 1u) sa[vi][pi].sub_phase = 0;
             sa_zero[vi] = 0;
+            sa_vmark(vi);
         }
-        if (!live) continue;
-        f0 = sa[vi][0].f0;
-        f1 = sa[vi][0].f1;
-        for (pi = 0; pi < SA_NP; pi++) {
+        m0 = 0u - (u32)sa[vi][0].f0;            /* the voice's flags as masks: no branches below */
+        m1 = 0u - (u32)sa[vi][0].f1;
+        for (todo = live; todo; todo &= todo - 1u) {
+            u32 pi = SA_LOW[todo];
             sa_part_t *p = &sa[vi][pi];
-            u32 volume, wa, sp, a1a, a, t1, t2;
-            if (!((live >> pi) & 1u)) continue;
+            u32 volume, wa, sp, a1a, a, t1, t2, end, env, w0, w1, pa, pb, sel, ph, x;
             active++;
-            a1a = f0 ? p->env_value : 1u << 25;
-            {   /* IC19: the envelope */
-                u32 a3 = 1u + (a1a >> 20) + p->env_offset, a1o, a1of, a2of, end;
-                volume = (f0 ? ((a1a >> 14) & 0x3Fu) : 0u) | ((a3 & 0xFu) << 6) | (a3 > 0xFFu ? ((a3 & 0xF0u) << 6) : 0u);
-                volume = ~volume & 0x3FFFu;
-                a1o = a1a + p->env_add + p->ci;
-                a1of = a1o > 0xFFFFFFFu;
-                a1o &= 0xFFFFFFFu;
-                a2of = (a1o >> 20) + p->dest_c > 0xFFu;
-                end = p->en && ((a1of != p->inv) || (p->inv != a2of));
-                if (end && !sa_irq) {
-                    sa_irq_id = (u8)(pi | vi << 4);
-                    sa_irq = 1;
-                }
-                p->env_value = end ? p->dest20 : a1o;
+            /* IC19: the envelope */
+            a1a = (p->env_value & m0) | ((1u << 25) & ~m0);
+            x = 1u + (a1a >> 20) + p->env_offset;                   /* <= 511: bit 8 is the carry */
+            volume = (((a1a >> 14) & 0x3Fu) & m0) | ((x & 0xFu) << 6) | (((x & 0xF0u) << 6) & (0u - ((x >> 8) & 1u)));
+            volume = ~volume & 0x3FFFu;
+            a = a1a + p->env_add + p->ci;                           /* < 2^29: bit 28 is the carry */
+            end = p->en & ((((a >> 28) & 1u) ^ p->inv) | (p->inv ^ ((((a & 0xFFFFFFFu) >> 20) + p->dest_c) >> 8)));
+            if (end && !sa_irq) {
+                sa_irq_id = (u8)(pi | vi << 4);
+                sa_irq = 1;
             }
-            {   /* IC9: the phase and the wave address */
-                u32 a1 = (p->step + p->sub_phase) & 0xFFFFFFu, a2 = (a1 >> 16) + p->loop_c;
-                sp = f1 ? ((a1 & 0xFFFFu) | (a2 > 0xFFu ? a2 & 0xFFu : a1 >> 16) << 16) : 0u;
-                p->sub_phase = sp;
-                wa = p->high11 | ((sp >> 9) & 0x7FFu);
+            env = (p->dest20 & (0u - end)) | (a & 0xFFFFFFFu & (end - 1u));
+            p->env_value = env;
+            /* IC9: the phase and the wave address */
+            a = (p->step + p->sub_phase) & 0xFFFFFFu;
+            x = (a >> 16) + p->loop_c;                              /* <= 511: bit 8 is the carry */
+            ph = ((x & 0xFFu) & (0u - (x >> 8))) | ((a >> 16) & ((x >> 8) - 1u));
+            sp = ((a & 0xFFFFu) | ph << 16) & m1;
+            p->sub_phase = sp;
+            wa = p->high11 | ((sp >> 9) & 0x7FFu);
+            /* IC8: the wave ROM, the level, the two exponentials */
+            {
+                const u8 *w = &RDP_WAVE[3u * (wa & 0x1FFFFu)];    /* (the board's program keeps it below) */
+                w0 = w[0]; w1 = w[1];
+                sel = ((wa >> 11) & 63u) > 4u;
+                pa = (w0 | (w1 & 0x3Fu) << 8) | sel;
+                pb = ((u32)w[2] << 1 | (w0 & 1u)) | (sel ^ 1u);
             }
-            {   /* IC8: the wave ROM, the level, the two exponentials */
-                const u8 *w = &RDP_WAVE[3u * (wa & 0x1FFFFu)];   /* (the board's program keeps it below) */
-                u32 sel = ((wa >> 11) & 63u) > 4u, b1 = w[1];
-                u32 pa = (w[0] | (b1 & 0x3Fu) << 8) | sel;
-                u32 pb = ((u32)w[2] << 1 | (w[0] & 1u)) | (sel ^ 1u);
-                if (p->pitch_hi || ((sp >> 20) & 15u) || !f1) volume |= 0xFu << 10;
-                a = volume + pa;
-                t1 = a > 0x3FFFu ? (a & 0x3FFFu) | 0x3C00u : a;
-                a = SA_ADDR[(sp >> 5) & 15u] + (pb & 0x1FFu);
-                if (a > 0x1FFu) a = (a & 0x1FFu) | 0x1E0u;
-                a = volume + (a << 5);
-                t2 = a > 0x3FFFu ? (a & 0x3FFFu) | 0x3C00u : a;
-                if (p->env_value != 0)          /* (librdpiano: keeps a voice from ringing at level 0) */
-                    result += sa_exp(t1, (b1 >> 6) & 1u) + sa_exp(t2, b1 >> 7);
-                else if (p->env_dest == 0)
-                    gone |= 1u << pi;           /* silent from the next sample on */
+            volume |= (0xFu << 10) & (0u - (p->pitch_hi | (((sp >> 20) & 15u) != 0) | (~m1 & 1u)));
+            a = volume + pa;                                        /* bit 14: the carry */
+            t1 = (a & 0x3FFFu) | (0x3C00u & (0u - (a >> 14)));
+            a = SA_ADDR[(sp >> 5) & 15u] + (pb & 0x1FFu);           /* bit 9: the carry */
+            a = (a & 0x1FFu) | (0x1E0u & (0u - (a >> 9)));
+            a = volume + (a << 5);
+            t2 = (a & 0x3FFFu) | (0x3C00u & (0u - (a >> 14)));
+            {
+                s32 e1 = (s32)(RDP_EXP[t1 & 1023u] >> (t1 >> 10)) ^ (s32)(0u - ((w1 >> 6) & 1u));
+                s32 e2 = (s32)(RDP_EXP[t2 & 1023u] >> (t2 >> 10)) ^ (s32)(0u - (w1 >> 7));
+                result += (e1 + e2) & (s32)(0u - (u32)(env != 0));   /* (librdpiano: no sound at level 0) */
             }
+            gone |= (u32)(env == 0 && p->env_dest == 0) << pi;     /* silent from the next sample on */
         }
         if (gone) {
             sa_live[vi] = (u16)(live & ~gone);
             sa_zero[vi] = (u16)gone;
+            sa_vmark(vi);
         }
     }
     rdp_active = active;
@@ -259,7 +304,7 @@ static u32 rdp_exact = 1;                      /* 1: 100 cycles a sample (the re
 /* the command queue to the board (librdpiano commands_queue): the main loop writes, the audio interrupt reads */
 static volatile u8 rdp_q[256];
 static volatile u32 rdp_qw, rdp_qr;
-static int rdp_q_empty(void) { return rdp_qw == rdp_qr; }
+static RDP_FAST int rdp_q_empty(void) { return rdp_qw == rdp_qr; }
 
 static u8 mcu_read(u32 addr);
 static void mcu_write(u32 addr, u8 data);
@@ -268,9 +313,9 @@ static void mcu_eat_cycles(void);
 static void mcu_take_trap(void);
 static void mcu_execute_one(void);
 static void mcu_set_input(int line, int state);
-static u32 RM16(u32 a) { return (u32)mcu_read(a) << 8 | mcu_read((a + 1u) & 0xFFFFu); }
-static void WM16(u32 a, PAIR *p) { mcu_write(a, p->b.h); mcu_write((a + 1u) & 0xFFFFu, p->b.l); }
-static void increment_counter(int amount) { m_icount -= amount; }
+static RDP_FAST u32 RM16(u32 a) { return (u32)mcu_read(a) << 8 | mcu_read((a + 1u) & 0xFFFFu); }
+static RDP_FAST void WM16(u32 a, PAIR *p) { mcu_write(a, p->b.h); mcu_write((a + 1u) & 0xFFFFu, p->b.l); }
+static RDP_FAST void increment_counter(int amount) { m_icount -= amount; }
 
 /* ---- the opcodes: rdpiano's mcu_ops.h (MAME m6800, BSD-3-Clause, Aaron Giles), as C functions */
 #define pPPC    m_ppc
@@ -463,7 +508,7 @@ HNZVC
 
 */
 
-#define OP_HANDLER(_name) static void op_##_name(void)
+#define OP_HANDLER(_name) static RDP_FAST void op_##_name(void)
 
 
 //OP_HANDLER( illegl1 )
@@ -2862,7 +2907,7 @@ static const u8 cycles_63701[256] =
 
 
 /* ---- the CPU around the opcodes (librdpiano Mcu) */
-static void mcu_enter_interrupt(u16 vector)
+static RDP_FAST void mcu_enter_interrupt(u16 vector)
 {
     int eat;
     if (m_wai_state & M6800_WAI) {
@@ -2880,10 +2925,10 @@ static void mcu_enter_interrupt(u16 vector)
     PCD = RM16(vector);
     increment_counter(eat);
 }
-static void mcu_take_trap(void) { mcu_enter_interrupt(0xFFEE); }
-static void mcu_eat_cycles(void) { if (m_icount > 0) increment_counter(m_icount); }
+static RDP_FAST void mcu_take_trap(void) { mcu_enter_interrupt(0xFFEE); }
+static RDP_FAST void mcu_eat_cycles(void) { if (m_icount > 0) increment_counter(m_icount); }
 
-static void mcu_check_irq_lines(void)
+static RDP_FAST void mcu_check_irq_lines(void)
 {
     if (m_nmi_pending) {
         m_wai_state &= ~M6800_SLP;
@@ -2898,7 +2943,7 @@ static void mcu_check_irq_lines(void)
     }
 }
 
-static void mcu_set_input(int line, int state)
+static RDP_FAST void mcu_set_input(int line, int state)
 {
     if (line == INPUT_LINE_NMI) {
         if (!m_nmi_state && state != CLEAR_LINE) m_nmi_pending = 1;
@@ -2916,7 +2961,7 @@ static void mcu_set_input(int line, int state)
     }
 }
 
-static u8 mcu_read(u32 addr)
+static RDP_FAST u8 mcu_read(u32 addr)
 {
     addr &= 0xFFFFu;
     if (addr >= 0xC000u) return rdp_prog[(addr - 0xC000u) & 0x1FFFu];
@@ -2947,7 +2992,7 @@ static u8 mcu_read(u32 addr)
     return 0xFF;
 }
 
-static void mcu_write(u32 addr, u8 data)
+static RDP_FAST void mcu_write(u32 addr, u8 data)
 {
     addr &= 0xFFFFu;
     if (addr == 0x03u) {                        /* port 2: the command was taken */
@@ -2972,7 +3017,7 @@ static void mcu_write(u32 addr, u8 data)
     }
 }
 
-static void mcu_execute_one(void)
+static RDP_FAST void mcu_execute_one(void)
 {
     u8 ireg;
     pPPC = pPC;
@@ -2982,7 +3027,7 @@ static void mcu_execute_one(void)
     increment_counter(cycles_63701[ireg]);
 }
 
-static void mcu_run_one(void)                   /* librdpiano Mcu::execute_run */
+static RDP_FAST void mcu_run_one(void)                   /* librdpiano Mcu::execute_run */
 {
     if (!rdp_q_empty()) mcu_set_input(M6801_TIN_LINE, ASSERT_LINE);
     if (sa_irq) mcu_set_input(M6800_IRQ_LINE, ASSERT_LINE);
@@ -2998,14 +3043,129 @@ static void rdp_push(u8 b)                      /* the main loop only: the one w
 }
 static int rdp_room(u32 n) { return (u32)(rdp_qw - rdp_qr) + n <= 256u; }   /* (a whole command, or none) */
 
-static s32 rdp_render(void)                     /* one sample; the audio interrupt */
+/* The board's idle work, run natively. RD200_B's main loop spends nearly all its time (94 % of the instructions,
+ * idle or playing) in a scan over the voices at E379..E38E:
+ *   E379 SEI / LDAA $50,X / BITA #1 / BEQ E386 / LDAB $70,X / BNE E388 / BRA E38F / E386 CLR $70,X /
+ *   E388 CLI / INX / CPX $92 / BCS E379 / E38E RTS
+ * Emulated, each of those costs as much as any instruction; mcu_fast runs them natively, one at a time with the
+ * same registers, flags, RAM and cycles, and every other instruction without the interpreter's per-instruction
+ * interrupt checks. Both only while nothing can interrupt the CPU (mcu_quiet: no IRQ, no command waiting; those
+ * arrive between samples, or from a port or TCSR write, after which it hands back). The samples come out the same
+ * as with the plain interpreter (tests: rdp_exact 1 before and after). rdp_init checks the program bytes. */
+static u32 rdp_fast;
+static const u8 RDP_SCAN[23] = {0x0F, 0xA6, 0x50, 0x85, 0x01, 0x27, 0x06, 0xE6, 0x70, 0x26, 0x04, 0x20, 0x09,
+                                0x6F, 0x70, 0x0E, 0x08, 0x9C, 0x92, 0x25, 0xEB, 0x39, 0x7A};
+#define RDP_SCAN_PC 0xE379u
+
+static RDP_FAST int mcu_quiet(void)                      /* nothing can interrupt the CPU before the next sample */
+{
+    return rdp_q_empty() && !sa_irq && m_irq_state[M6800_IRQ_LINE] == CLEAR_LINE && !m_nmi_pending &&
+           (m_tcsr & (TCSR_EICI | TCSR_ICF)) != (TCSR_EICI | TCSR_ICF);
+}
+
+static RDP_FAST void mcu_fast(void)                      /* the rest of the sample, while nothing can interrupt the CPU */
+{
+    u32 x = X, cc = CC;
+    while (m_icount > 0) {                      /* (one instruction a turn, as the interpreter: same stops) */
+        switch (PC) {
+        case 0xE379:                                                                         /* SEI */
+            while (m_icount >= 26 && x + 0x70u < 0x1000u) {     /* whole passes at once, while they fit */
+                u32 a = rdp_ram[0x50u + x], lim, r;
+                int ic = m_icount;
+                A = (u8)a;                                      /* SEI, LDAA, BITA: N = 0, Z = !(a & 1) */
+                if (!(a & 1u)) {                                /* BEQ, CLR $70,X */
+                    rdp_ram[0x70u + x] = 0;
+                    ic -= 1 + 4 + 2 + 3 + 5;
+                } else {
+                    u32 b = rdp_ram[0x70u + x];                 /* LDAB, BNE */
+                    B = (u8)b;
+                    if (!b) {                                   /* BRA E38F: out (the flags of LDAB) */
+                        cc = (cc & 0xF1u) | 0x10u | 4u;
+                        m_icount = ic - (1 + 4 + 2 + 3 + 4 + 3 + 3);
+                        PC = 0xE38F;
+                        goto out;
+                    }
+                    ic -= 1 + 4 + 2 + 3 + 4 + 3;
+                }
+                x = (x + 1u) & 0xFFFFu;                         /* CLI, INX, CPX $92: N Z V C; BCS */
+                lim = (u32)rdp_ram[0x92] << 8 | rdp_ram[0x93];
+                r = x - lim;
+                cc = (cc & 0xE0u) | ((r & 0x8000u) >> 12) | ((r & 0xFFFFu) ? 0u : 4u) |
+                     (((x ^ lim ^ r ^ (r >> 1)) & 0x8000u) >> 14) | ((r >> 16) & 1u);
+                m_icount = ic - (1 + 1 + 4 + 3);
+                if (!(cc & 1u)) { PC = 0xE38E; goto next; }
+            }
+            if (m_icount <= 0) goto out;
+            cc |= 0x10u; PC = 0xE37A; m_icount -= 1; continue;
+        case 0xE37A: {                                                                       /* LDAA $50,X */
+            u32 a;
+            if (x + 0x70u >= 0x1000u) break;
+            a = rdp_ram[0x50u + x];
+            A = (u8)a;
+            cc = (cc & 0xF1u) | ((a & 0x80u) >> 4) | (a ? 0u : 4u);
+            PC = 0xE37C; m_icount -= 4; continue;
+        }
+        case 0xE37C: cc = (cc & 0xF1u) | ((A & 1u) ? 0u : 4u); PC = 0xE37E; m_icount -= 2; continue;   /* BITA #1 */
+        case 0xE37E: PC = (cc & 4u) ? 0xE386 : 0xE380; m_icount -= 3; continue;              /* BEQ E386 */
+        case 0xE380: {                                                                       /* LDAB $70,X */
+            u32 b;
+            if (x + 0x70u >= 0x1000u) break;
+            b = rdp_ram[0x70u + x];
+            B = (u8)b;
+            cc = (cc & 0xF1u) | ((b & 0x80u) >> 4) | (b ? 0u : 4u);
+            PC = 0xE382; m_icount -= 4; continue;
+        }
+        case 0xE382: PC = (cc & 4u) ? 0xE384 : 0xE388; m_icount -= 3; continue;              /* BNE E388 */
+        case 0xE386:                                                                         /* CLR $70,X */
+            if (x + 0x70u >= 0x1000u) break;
+            rdp_ram[0x70u + x] = 0;
+            cc = (cc & 0xF0u) | 4u;
+            PC = 0xE388; m_icount -= 5; continue;
+        case 0xE388: cc &= ~0x10u; PC = 0xE389; m_icount -= 1; continue;                    /* CLI */
+        case 0xE389: x = (x + 1u) & 0xFFFFu; cc = (cc & 0xFBu) | (x ? 0u : 4u); PC = 0xE38A; m_icount -= 1; continue;   /* INX */
+        case 0xE38A: {                                                                       /* CPX $92 */
+            u32 lim = (u32)rdp_ram[0x92] << 8 | rdp_ram[0x93], r = x - lim;
+            cc &= 0xF0u;
+            cc |= (r & 0x8000u) >> 12;
+            cc |= (r & 0xFFFFu) ? 0u : 4u;
+            cc |= ((x ^ lim ^ r ^ (r >> 1)) & 0x8000u) >> 14;
+            cc |= (r >> 16) & 1u;
+            PC = 0xE38C; m_icount -= 4; continue;
+        }
+        case 0xE38C: PC = (cc & 1u) ? 0xE379 : 0xE38E; m_icount -= 3; continue;              /* BCS E379 */
+        default: break;
+        }
+        if (0) { next: continue; }
+        {   /* any other instruction: the interpreter's, without its interrupt checks (nothing is pending) */
+            u8 ireg;
+            X = (u16)x; CC = (u8)cc;
+            pPPC = pPC;
+            ireg = PC >= 0xC000u ? rdp_prog[(PC - 0xC000u) & 0x1FFFu] : mcu_read(PCD);
+            PC++;
+            hd63701_insn[ireg]();
+            increment_counter(cycles_63701[ireg]);
+            x = X; cc = CC;
+            if (!mcu_quiet()) break;            /* (a port or TCSR write may have raised one: back to the checks) */
+        }
+    }
+out:
+    X = (u16)x; CC = (u8)cc;
+}
+
+static RDP_FAST s32 rdp_render(void)                     /* one sample; the audio interrupt */
 {
     s32 s = sa_update();
     int n = rdp_khz32 ? 62 : 100;
     if (rdp_exact) {
         m_icount += n;                          /* what the last instruction overran is owed */
         if (m_icount > n) m_icount = n;
-        while (m_icount > 0) mcu_run_one();
+        while (m_icount > 0) {
+            if (rdp_fast && mcu_quiet()) {
+                mcu_fast();
+                if (m_icount <= 0) break;
+            }
+            mcu_run_one();
+        }
     } else {
         int i;
         for (i = 0; i < n; i++) mcu_run_one();
@@ -3058,7 +3218,7 @@ static int rdp_select(u32 i)                    /* main loop: 0 = queued (the re
     return 0;
 }
 
-static void rdp_take(void)                      /* audio interrupt, before rendering: a patch change that waits */
+static RDP_FAST void rdp_take(void)                      /* audio interrupt, before rendering: a patch change that waits */
 {
     u32 p = rdp_pending;
     if (!p) return;
@@ -3093,6 +3253,9 @@ static int rdp_init(u32 patch)                  /* main loop, before the render 
 {
     u32 i;
     for (i = 0; i < sizeof rdp_prog; i++) rdp_prog[i] = RDP_PROG[i];
+    rdp_fast = 1;                               /* the scan's bytes, as mcu_scan knows them */
+    for (i = 0; i < sizeof RDP_SCAN; i++)
+        if (rdp_prog[(RDP_SCAN_PC & 0x1FFFu) + i] != RDP_SCAN[i]) rdp_fast = 0;
     if (patch >= RDP_NPATCH) patch = 0;
     if (rdp_unpack(patch, rdp_win[0])) return -1;
     rdp_set(patch, rdp_win[0]);
