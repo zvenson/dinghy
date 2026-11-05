@@ -151,68 +151,103 @@ static RDP_FAST void sa_write(u32 offset, u8 data)
     }
 }
 
-static RDP_FAST s32 sa_update(void)                      /* one sample of all voices (SoundChip::update) */
+static const u8 SA_LOW[1024] = {                /* the lowest set bit of a 10-bit mask (the next part to do) */
+    0,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    7,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    8,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    7,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    9,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    7,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    8,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    7,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+    5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+};
+static RDP_FAST s32 sa_update(void)             /* one sample of all voices (SoundChip::update) */
 {
     s32 result = 0;
-    u32 vi, pi, active = 0, vm;
+    u32 vi, active = 0, vm;
     for (vi = 0, vm = sa_vmask; vm; vi++, vm >>= 1) {   /* the voices with something to do */
-        u32 live, f0, f1, gone = 0;
+        u32 live, m0, m1, gone = 0, todo;
         if (!(vm & 1u)) continue;
         live = sa_live[vi];
         if (sa_zero[vi]) {                      /* librdpiano zeroes a silent part's sub phase when it skips it */
-            u32 z = sa_zero[vi] & ~live;
+            u32 z = sa_zero[vi] & ~live, pi;
             for (pi = 0; z; pi++, z >>= 1)
                 if (z & 1u) sa[vi][pi].sub_phase = 0;
             sa_zero[vi] = 0;
             sa_vmark(vi);
         }
-        if (!live) continue;
-        f0 = sa[vi][0].f0;
-        f1 = sa[vi][0].f1;
-        for (pi = 0; pi < SA_NP; pi++) {
+        m0 = 0u - (u32)sa[vi][0].f0;            /* the voice's flags as masks: no branches below */
+        m1 = 0u - (u32)sa[vi][0].f1;
+        for (todo = live; todo; todo &= todo - 1u) {
+            u32 pi = SA_LOW[todo];
             sa_part_t *p = &sa[vi][pi];
-            u32 volume, wa, sp, a1a, a, t1, t2;
-            if (!((live >> pi) & 1u)) continue;
+            u32 volume, wa, sp, a1a, a, t1, t2, end, env, w0, w1, pa, pb, sel, ph, x;
             active++;
-            a1a = f0 ? p->env_value : 1u << 25;
-            {   /* IC19: the envelope */
-                u32 a3 = 1u + (a1a >> 20) + p->env_offset, a1o, a1of, a2of, end;
-                volume = (f0 ? ((a1a >> 14) & 0x3Fu) : 0u) | ((a3 & 0xFu) << 6) | (a3 > 0xFFu ? ((a3 & 0xF0u) << 6) : 0u);
-                volume = ~volume & 0x3FFFu;
-                a1o = a1a + p->env_add + p->ci;
-                a1of = a1o > 0xFFFFFFFu;
-                a1o &= 0xFFFFFFFu;
-                a2of = (a1o >> 20) + p->dest_c > 0xFFu;
-                end = p->en && ((a1of != p->inv) || (p->inv != a2of));
-                if (end && !sa_irq) {
-                    sa_irq_id = (u8)(pi | vi << 4);
-                    sa_irq = 1;
-                }
-                p->env_value = end ? p->dest20 : a1o;
+            /* IC19: the envelope */
+            a1a = (p->env_value & m0) | ((1u << 25) & ~m0);
+            x = 1u + (a1a >> 20) + p->env_offset;                   /* <= 511: bit 8 is the carry */
+            volume = (((a1a >> 14) & 0x3Fu) & m0) | ((x & 0xFu) << 6) | (((x & 0xF0u) << 6) & (0u - ((x >> 8) & 1u)));
+            volume = ~volume & 0x3FFFu;
+            a = a1a + p->env_add + p->ci;                           /* < 2^29: bit 28 is the carry */
+            end = p->en & ((((a >> 28) & 1u) ^ p->inv) | (p->inv ^ ((((a & 0xFFFFFFFu) >> 20) + p->dest_c) >> 8)));
+            if (end && !sa_irq) {
+                sa_irq_id = (u8)(pi | vi << 4);
+                sa_irq = 1;
             }
-            {   /* IC9: the phase and the wave address */
-                u32 a1 = (p->step + p->sub_phase) & 0xFFFFFFu, a2 = (a1 >> 16) + p->loop_c;
-                sp = f1 ? ((a1 & 0xFFFFu) | (a2 > 0xFFu ? a2 & 0xFFu : a1 >> 16) << 16) : 0u;
-                p->sub_phase = sp;
-                wa = p->high11 | ((sp >> 9) & 0x7FFu);
+            env = (p->dest20 & (0u - end)) | (a & 0xFFFFFFFu & (end - 1u));
+            p->env_value = env;
+            /* IC9: the phase and the wave address */
+            a = (p->step + p->sub_phase) & 0xFFFFFFu;
+            x = (a >> 16) + p->loop_c;                              /* <= 511: bit 8 is the carry */
+            ph = ((x & 0xFFu) & (0u - (x >> 8))) | ((a >> 16) & ((x >> 8) - 1u));
+            sp = ((a & 0xFFFFu) | ph << 16) & m1;
+            p->sub_phase = sp;
+            wa = p->high11 | ((sp >> 9) & 0x7FFu);
+            /* IC8: the wave ROM, the level, the two exponentials */
+            {
+                const u8 *w = &RDP_WAVE[3u * (wa & 0x1FFFFu)];    /* (the board's program keeps it below) */
+                w0 = w[0]; w1 = w[1];
+                sel = ((wa >> 11) & 63u) > 4u;
+                pa = (w0 | (w1 & 0x3Fu) << 8) | sel;
+                pb = ((u32)w[2] << 1 | (w0 & 1u)) | (sel ^ 1u);
             }
-            {   /* IC8: the wave ROM, the level, the two exponentials */
-                const u8 *w = &RDP_WAVE[3u * (wa & 0x1FFFFu)];   /* (the board's program keeps it below) */
-                u32 sel = ((wa >> 11) & 63u) > 4u, b1 = w[1];
-                u32 pa = (w[0] | (b1 & 0x3Fu) << 8) | sel;
-                u32 pb = ((u32)w[2] << 1 | (w[0] & 1u)) | (sel ^ 1u);
-                if (p->pitch_hi || ((sp >> 20) & 15u) || !f1) volume |= 0xFu << 10;
-                a = volume + pa;
-                t1 = a > 0x3FFFu ? (a & 0x3FFFu) | 0x3C00u : a;
-                a = SA_ADDR[(sp >> 5) & 15u] + (pb & 0x1FFu);
-                if (a > 0x1FFu) a = (a & 0x1FFu) | 0x1E0u;
-                a = volume + (a << 5);
-                t2 = a > 0x3FFFu ? (a & 0x3FFFu) | 0x3C00u : a;
-                if (p->env_value != 0)          /* (librdpiano: keeps a voice from ringing at level 0) */
-                    result += sa_exp(t1, (b1 >> 6) & 1u) + sa_exp(t2, b1 >> 7);
-                else if (p->env_dest == 0)
-                    gone |= 1u << pi;           /* silent from the next sample on */
+            volume |= (0xFu << 10) & (0u - (p->pitch_hi | (((sp >> 20) & 15u) != 0) | (~m1 & 1u)));
+            a = volume + pa;                                        /* bit 14: the carry */
+            t1 = (a & 0x3FFFu) | (0x3C00u & (0u - (a >> 14)));
+            a = SA_ADDR[(sp >> 5) & 15u] + (pb & 0x1FFu);           /* bit 9: the carry */
+            a = (a & 0x1FFu) | (0x1E0u & (0u - (a >> 9)));
+            a = volume + (a << 5);
+            t2 = (a & 0x3FFFu) | (0x3C00u & (0u - (a >> 14)));
+            {
+                s32 e1 = (s32)(RDP_EXP[t1 & 1023u] >> (t1 >> 10)) ^ (s32)(0u - ((w1 >> 6) & 1u));
+                s32 e2 = (s32)(RDP_EXP[t2 & 1023u] >> (t2 >> 10)) ^ (s32)(0u - (w1 >> 7));
+                result += (e1 + e2) & (s32)(0u - (u32)(env != 0));   /* (librdpiano: no sound at level 0) */
             }
+            gone |= (u32)(env == 0 && p->env_dest == 0) << pi;     /* silent from the next sample on */
         }
         if (gone) {
             sa_live[vi] = (u16)(live & ~gone);
