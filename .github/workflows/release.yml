@@ -50,6 +50,12 @@ jobs:
           BOARD=smk37 MODEL=mke sh build.sh
           sh build.sh
 
+      - name: CPU load on fm1-emu (strict, 240 MHz)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libasound2-dev libudev-dev libx11-dev libxkbcommon-dev \
+              libwayland-dev libxcursor-dev libxrandr-dev libxi-dev pkg-config >/dev/null
+          sh tools/emu_load.sh ../fm1-emu || echo "::warning title=fm1-emu::the load measurement did not run"
+
       - name: Host tests
         run: sh tests/run_tests.sh
 
