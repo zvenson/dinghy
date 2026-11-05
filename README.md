@@ -7,10 +7,11 @@ rdpiano emulates the board these pianos share: the HD6301 CPU running Roland's p
 from silicon analysis. RDPNO runs that emulation inside the FM-1's audio interrupt, reading the ROMs straight
 from flash, and plays it from the keys and MIDI.
 
-> **Status: experimental, untested on the device.** The emulation core is checked on a computer: it gives
-> librdpiano's samples bit for bit (`tests/rdp_compare.sh`, all three ROM sets), and the firmware runs in host
-> mode. It has not yet been built with the JieLi toolchain nor run on an FM-1. The open questions are the CPU load
-> and whether the image fits (see [What to check first](#what-to-check-first)).
+> **Status: experimental, not yet tried on an FM-1.** The emulation core gives librdpiano's samples bit for bit
+> (`tests/rdp_compare.sh`, all three ROM sets). The firmware builds with the JieLi toolchain: the GitHub workflow
+> builds the `.fwsc` packages, and the build's checks pass (the image fits the app slot with MKS-20 voices 1-3; no
+> 64-bit division, no chip ROM calls, RAM within limits). What only the device can show: whether the CPU keeps up
+> (see [What to check first](#what-to-check-first)).
 
 ## The panel, after the MKS-20's front
 
@@ -78,8 +79,8 @@ Back to another firmware: the [FM-1 Firmware Hub](https://thefirmwarehub.com), o
 
 ## What to check first
 
-1. **Does it fit?** `./build.sh` prints `image N B of 581564`. Estimated with another compiler: about 560 KB for
-   MKS-20 A (fits), about 580 KB for MK-80 with all 8 tones (on the edge). If the build says the image is too big, leave out
+1. **Does it fit?** `./build.sh` prints `image N B of 581564`. MKS-20 voices 1-3 fit (the workflow's build passes).
+   Estimated with another compiler: about 580 KB for the MK-80 with all 8 tones (on the edge). If the build says the image is too big, leave out
    voices: `RDP_PATCHES=0,1 RDP_REPACK=1 ./build.sh` (every parameter window left out: 20..28 KB).
 2. **Is the CPU fast enough?** The screen shows the sound's share of the audio interrupt's 5.8 ms. On a computer
    the emulation costs about 12,000 x86 instructions per board sample (20 kHz) with ~57 of the 160 parts sounding,
