@@ -1,0 +1,16 @@
+# RDPNO: a chord on the keys, PLAY as the sustain pedal, PRESETS to the next patches, a MIDI program change to
+# a 32 kHz patch (CONTEMPORARY), the screen in between
+200 keys 0x4880
+1400 btn 12
+1600 keys 0
+2500 shot
+3000 enc 6 4
+3300 keys 0x80
+3800 keys 0
+4000 midi 0xC0 3 0
+4300 midi 0x90 60 110
+4800 shot
+5000 btn 12
+5200 midi 0x80 60 0
+6000 shot
+6500 end

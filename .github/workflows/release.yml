@@ -4,9 +4,10 @@
 # sloopDX's and OberVave's workflows. Run by hand (workflow_dispatch) for a test build without a release.
 name: release
 
+# RDPNO: by hand only. The build needs Roland's ROMs (tools/pack_roms.py), which are not in this repository: the
+# step below takes them from rdpiano's repository, and the packages it makes contain them. Keep them to yourself
+# (the workflow's artifact is private to the repository's collaborators); do not publish them as a release.
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
 
 jobs:
@@ -39,6 +40,9 @@ jobs:
           done
           test -d ~/fw-AC79_AIoT_SDK
 
+      - name: The ROMs (rdpiano's roms/ folder; see the note at the top)
+        run: git clone --depth 1 https://github.com/giulioz/rdpiano ../rdpiano
+
       - name: Build (the SMK-37 first, the FM-1 last, as the tests expect)
         run: |
           BOARD=smk37 sh build.sh
@@ -57,26 +61,26 @@ jobs:
           BOARD=smk37 MODEL=elite sh build.sh --release "$V"
           BOARD=smk37 MODEL=mke sh build.sh --release "$V"
           sh build.sh --release "$V"
-          ls -l build/dinghy-"$V"*.fwsc
-          (cd build && sha256sum dinghy-"$V"*.fwsc > SHA256SUMS)
+          ls -l build/rdpno-"$V"*.fwsc
+          (cd build && sha256sum rdpno-"$V"*.fwsc > SHA256SUMS)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dinghy-fwsc
-          path: build/dinghy*.fwsc
+          name: rdpno-fwsc
+          path: build/rdpno*.fwsc
           if-no-files-found: error
 
       - name: Attest the packages (tags only)
         if: github.ref_type == 'tag'
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: build/dinghy-[0-9]*.fwsc
+          subject-path: build/rdpno-[0-9]*.fwsc
 
       - name: Release (tags only)
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            build/dinghy-[0-9]*.fwsc   # (the release builds, not the dev ones: dinghy-smk37.fwsc)
+            build/rdpno-[0-9]*.fwsc   # (the release builds, not the dev ones: rdpno-smk37.fwsc)
             build/SHA256SUMS
           generate_release_notes: true
