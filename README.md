@@ -1,6 +1,6 @@
 # RDPNO
 
-**Roland's SA pianos (Rhodes MK-80, MKS-20) on the M-VAVE FM-1: [rdpiano](https://github.com/giulioz/rdpiano)'s
+**Roland's SA pianos (MKS-20; also the Rhodes MK-80) on the M-VAVE FM-1: [rdpiano](https://github.com/giulioz/rdpiano)'s
 emulation of the CPU-B board, ported to the FM-1 on [Dinghy](https://github.com/zvenson/dinghy).**
 
 rdpiano emulates the board these pianos share: the HD6301 CPU running Roland's program and the SA sound chip,
@@ -12,22 +12,26 @@ from flash, and plays it from the keys and MIDI.
 > mode. It has not yet been built with the JieLi toolchain nor run on an FM-1. The open questions are the CPU load
 > and whether the image fits (see [What to check first](#what-to-check-first)).
 
-## What it does
+## The panel, after the MKS-20's front
 
-| | |
-| --- | --- |
-| **keys** | play; the notes also go out over USB-MIDI, on the MIDI channel |
-| **PRESETS** | the patch (MK-80: CLASSIC, SPECIAL, BLEND, CONTEMPORARY, A.PIANO 1, A.PIANO 2, CLAVI, VIBRAPHONE) |
-| **SELECT** | the MIDI channel: OMNI or 1..16 |
-| **KNOB 1** | the velocity the keys play with (the FM-1's keys have no velocity; the SMK-37's have) |
-| **OCT- / OCT+** | the octave |
-| **PLAY** | the sustain pedal, latched (lit while it is down) |
-| **MASTER** | the volume |
-| **MIDI in** | note on/off with velocity, CC 64 (sustain), program change (the patch); USB and the TRS jack |
-| **screen** | the patch and its rate, the CPU load of the sound (now and the peak of the last 2 s), the parts sounding |
+Three pages, as the MKS-20's edit parameters. **SELECT** turns through them, or **HOME**, **FX**, **ENV** jump to one
+(its button lights). The screen shows the voice on top (as the MKS-20's LCD), the page, its four knobs with their
+values (the last one turned in white), MIDI and the CPU load.
 
-The patch, channel, velocity and octave are kept in flash. 16 voices, as on the board; the board's program
-assigns and steals them. No chorus or tremolo yet (rdpiano_juce has them on top of the board).
+| | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
+| --- | --- | --- | --- | --- |
+| **HOME** | voice level 0..15 | treble level (10 kHz) | bass level (100 Hz) | the keys' velocity |
+| **FX** | tremolo rate 1..15 | tremolo depth (0 = off) | chorus rate 1..15 | chorus depth (0 = off) |
+| **ENV** | middle frequency 200 Hz..8 kHz | middle level | band width 1..8 (higher = narrower) | |
+
+On every page: **PRESETS** the voice, **ALGORITHM** the MIDI receive channel (OMNI, 1..16), **OCT- / OCT+** the
+octave, **PLAY** the sustain pedal (latched), **MASTER** the volume. Levels go -12..+12 dB in 1.5 dB steps, as on
+the MKS-20. MIDI in: notes with velocity, CC 64, program change (the voice); the keys go out on USB-MIDI.
+Everything but the pedal is kept in flash. The settings are global, not per voice (the MKS-20 keeps them per tone).
+
+The board gives 16 voices; the equalizer (Simper SVFs), the chorus (a modulated delay, the two sides in
+antiphase) and the stereo tremolo are new integer approximations in `fx.c`, not emulations of the MKS-20's
+analog circuits.
 
 ## The ROMs
 
@@ -36,15 +40,16 @@ not publish the packages. `tools/pack_roms.py` takes them from rdpiano's `roms/`
 
 ```sh
 git clone --depth 1 https://github.com/giulioz/rdpiano ../rdpiano     # the ROMs are in ../rdpiano/roms
-python3 tools/pack_roms.py                    # -> firmware/gen/rdp_rom.h (MK-80, all 8 patches)
-python3 tools/pack_roms.py --set mks20b       # MKS-20: HARPSICHORD, CLAVI, VIBRAPHONE, E-PIANO 1, E-PIANO 2
-python3 tools/pack_roms.py --set mks20a       # MKS-20: PIANO 1..3
-python3 tools/pack_roms.py --patches 0,4,1,5  # only these patches of the set (saves flash, see below)
+python3 tools/pack_roms.py                    # -> firmware/gen/rdp_rom.h: MKS-20 voices 1-3, PIANO 1..3
+python3 tools/pack_roms.py --set mks20b       # MKS-20 voices 4-8: HARPSICHORD, CLAVI, VIBRAPHONE, E-PIANO 1, 2
+python3 tools/pack_roms.py --set mk80         # Rhodes MK-80 (Roland's 1989 piano on the same board): 8 tones
+python3 tools/pack_roms.py --patches 0,1      # only these voices of the set (saves flash, see below)
 ```
 
 `./build.sh` runs it by itself when `firmware/gen/rdp_rom.h` is missing (`RDP_ROMS=/path/to/roms` if they are
-elsewhere; `RDP_REPACK=1` to pack again). One set per build: the wave ROMs alone are 384 KB of the 568 KB an FM-1
-app may have.
+elsewhere, `RDP_SET=mks20b`, `RDP_REPACK=1` to pack again). **One wave set per build:** the MKS-20 itself has two
+(voices 1-3 and 4-8), each 384 KB, and an FM-1 app may have 568 KB in all. So all eight MKS-20 voices make two
+firmwares (`mks20a`, `mks20b`); the MK-80 has its eight on one set.
 
 ## Build and install
 
@@ -73,9 +78,9 @@ Back to another firmware: the [FM-1 Firmware Hub](https://thefirmwarehub.com), o
 
 ## What to check first
 
-1. **Does it fit?** `./build.sh` prints `image N B of 581564`. Estimated with another compiler: about 570 KB with
-   all 8 MK-80 patches, so close. If the build says the image is too big: `RDP_PATCHES=0,4,1,5 RDP_REPACK=1
-   ./build.sh` (4 patches, about 45 KB less).
+1. **Does it fit?** `./build.sh` prints `image N B of 581564`. Estimated with another compiler: about 560 KB for
+   MKS-20 A (fits), about 580 KB for MK-80 with all 8 tones (on the edge). If the build says the image is too big, leave out
+   voices: `RDP_PATCHES=0,1 RDP_REPACK=1 ./build.sh` (every parameter window left out: 20..28 KB).
 2. **Is the CPU fast enough?** The screen shows the sound's share of the audio interrupt's 5.8 ms. On a computer
    the emulation costs about 12,000 x86 instructions per board sample (20 kHz) with ~57 of the 160 parts sounding,
    about 5,400 per 44.1 kHz output sample: several times what sloopDX's engines take. Play big sustained chords
@@ -91,7 +96,8 @@ Back to another firmware: the [FM-1 Firmware Hub](https://thefirmwarehub.com), o
 | File | |
 | --- | --- |
 | `firmware/src/rdp.c` | the board: librdpiano's `Mcu` (MAME's HD6301) and `SoundChip`, in C, no heap, no float. The ROM tables live in flash (3 bytes a wave address), the parameter ROM's 32 KB window of the patch is unpacked (LZ4) into the pool, the exponential tables are folded to 10 KB (`rdp_tables.h`), and the sound chip only visits the parts that sound |
-| `firmware/src/rdpno.c` | the app: keys, MIDI, the panel, the screen; the board's 20/32 kHz resampled to 44.1 kHz |
+| `firmware/src/rdpno.c` | the app: keys, MIDI, the panel (HOME / FX / ENV), the screen; the board's 20/32 kHz resampled to 44.1 kHz |
+| `firmware/src/fx.c`, `fx_tables.h` | voice level, bass/middle/treble EQ, chorus, tremolo at 44.1 kHz; the constants from `tools/gen_fx_tables.py` |
 | `tools/pack_roms.py` | the ROMs, descrambled as librdpiano does it, into `firmware/gen/rdp_rom.h` |
 | `tests/rdp_test.c`, `rdp_ref.cpp`, `rdp_script.h`, `rdp_compare.sh` | the same script on the port and on librdpiano |
 | everything else | Dinghy's platform: updates, USB rescue, USB-MIDI/audio, panel, screen, storage, the SMK-37 |

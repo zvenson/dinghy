@@ -16,7 +16,7 @@ complete source under the same licence too.
 | The wiring `platform.c`, the host mode `tests/host.c`, `run_host.sh`, Dinghy's docs | zvenson ([Dinghy](https://github.com/zvenson/dinghy)) |
 | The SA piano emulation `firmware/src/rdp.c` (a C port of librdpiano), the descrambling in `tools/pack_roms.py`, the tables in `firmware/src/rdp_tables.h` | after [rdpiano](https://github.com/giulioz/rdpiano), Copyright (C) Giulio Zausa and contributors, GPL-3.0 |
 | The HD6301 core in `firmware/src/rdp.c` (the opcode handlers, flag tables, cycle counts) | from [MAME](https://github.com/mamedev/mame)'s m6800 as rdpiano carries it, BSD-3-Clause, copyright-holders Aaron Giles, Nicola Salmoria |
-| The app `firmware/src/rdpno.c`, the port, `tests/rdp_*`, `tests/scripts/rdpno.txt` | R-Jeb |
+| The app `firmware/src/rdpno.c`, the effects `firmware/src/fx.c` (the equalizer after Andrew Simper's SVF paper; the chorus rates after rdpiano_juce), `tools/gen_fx_tables.py`, the port, `tests/rdp_*`, `tests/scripts/rdpno.txt` | R-Jeb |
 
 ## Third-party material
 
