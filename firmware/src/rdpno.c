@@ -31,6 +31,7 @@ static void app_idle(void);
 static volatile uint32_t rdp_ready;            /* rdp_init is done: render */
 static volatile uint32_t load_now, load_peak;   /* the render's share of the 5.8 ms a block, in 1/1000 */
 volatile uint32_t rdp_load_max, rdp_parts_max;  /* the highest since boot (tools/emu_load.sh reads them) */
+volatile uint32_t rdp_load_sum, rdp_load_n;     /* and the sum over the blocks from 1.5 s on, for a mean */
 static int32_t rs_prev, rs_cur;                 /* the board's last two samples */
 static uint32_t rs_frac;                        /* where between them, Q16 */
 
@@ -60,7 +61,8 @@ static void app_audio(int32_t *out, uint32_t n)
     t = (fm1_ticks() - t0) / FM1_TICKS_PER_US;  /* us of the 5805 a block has */
     load_now = t * 1000u / 5805u;
     if (load_now > load_peak) load_peak = load_now;
-    if (load_now > rdp_load_max) rdp_load_max = load_now;
+    if (load_now > rdp_load_max && fm1_ms > 1500u) rdp_load_max = load_now;
+    if (fm1_ms > 1500u) { rdp_load_sum += load_now; rdp_load_n++; }
     if (rdp_active > rdp_parts_max) rdp_parts_max = rdp_active;
 #endif
 }
