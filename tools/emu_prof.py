@@ -51,4 +51,4 @@ for a, n in sorted(miss.items(), key=lambda x: -x[1])[:8]:
     i = bisect.bisect_right(starts, a) - 1
     out.append(f"  {n:8d}  {a:08x}  {funcs[i][2] if i >= 0 else '?'}")
 print("\n".join(out))
-print("::notice title=fm1-emu profile (8-note chord)::" + "%0A".join(out))
+print("::notice title=fm1-emu profile (three keys struck again)::" + "%0A".join(out))
