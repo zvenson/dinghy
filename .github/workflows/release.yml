@@ -33,13 +33,26 @@ jobs:
       - name: JieLi toolchain (pkgman.jieliapp.com)
         run: sh tools/get_toolchain.sh
 
+      # The three files of the SDK the package needs, kept between runs: gitee.com drops clones now and then
+      # (a run failed so, 2026-11-06), and with them cached it is asked only once. build.py checks their SHA-256.
+      - name: JieLi AC79 SDK, from the cache
+        id: sdk
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/fw-AC79_AIoT_SDK/cpu/wl82/tools/uboot.boot
+            ~/fw-AC79_AIoT_SDK/cpu/wl82/tools/cfg_tool.bin
+            ~/fw-AC79_AIoT_SDK/cpu/wl82/tools/cfg/eq_cfg_hw.bin
+          key: ac79-sdk-AC79NN_SDK_V1.2.1_2023-12-13
+
       - name: JieLi AC79 SDK (three files of it are placed in the package)
+        if: steps.sdk.outputs.cache-hit != 'true'
         run: |
-          for i in 1 2 3; do                     # (gitee.com drops a clone now and then: try again)
+          for i in 1 2 3 4 5; do                 # (gitee.com drops a clone now and then: try again)
             git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 \
                 https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git ~/fw-AC79_AIoT_SDK && break
             rm -rf ~/fw-AC79_AIoT_SDK
-            sleep 20
+            sleep $((30 * i))
           done
           test -d ~/fw-AC79_AIoT_SDK
 
