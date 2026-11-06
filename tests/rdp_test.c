@@ -1,10 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* The C port (firmware/src/rdp.c) on a computer: tests/rdp_script.h -> raw samples (s32, the board's rate).
  *   cc -O2 -Ifirmware/src -Ifirmware/gen -o build/host/rdp_test tests/rdp_test.c
- *   build/host/rdp_test OUT.raw [exact 0|1]      (tests/rdp_compare.sh runs it; DINGHY_PERF-like counts: perf stat) */
+ *   build/host/rdp_test OUT.raw [exact 0|1] [quiet 0..16] [voices 1..16]      (tests/rdp_compare.sh runs it; DINGHY_PERF-like counts: perf stat) */
 #include <stdio.h>
 #include <stdlib.h>
 #define RDP_POOL
+#ifdef RDP_TEST_SPLIT                           /* the second core's half, run right away (its results stay apart) */
+#define RDP_SPLIT_RUN(fn, arg) ((fn)(arg), 1)
+#define RDP_SPLIT_WAIT() 0
+#endif
 #include "rdp.c"
 #include "rdp_script.h"
 
@@ -15,6 +19,8 @@ int main(int argc, char **argv)
     long long peak = 0, act = 0, act_max = 0;
     if (argc < 2) { fprintf(stderr, "usage: rdp_test OUT.raw [exact]\n"); return 2; }
     rdp_exact = argc > 2 ? (u32)atoi(argv[2]) : 1u;
+    rdp_quiet = argc > 3 ? (u32)atoi(argv[3]) : 16u;   /* (16: every part, as librdpiano; the firmware: 10) */
+    rdp_voices = argc > 4 ? (u32)atoi(argv[4]) : 16u;  /* (the board's 16; fewer: rdp.c rdp_voices) */
     if (rdp_init(0)) { fprintf(stderr, "rdp_init failed\n"); return 1; }
     f = fopen(argv[1], "wb");
     if (!f) return 1;

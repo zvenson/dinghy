@@ -23,10 +23,10 @@ values (the last one turned in white), MIDI and the CPU load.
 | --- | --- | --- | --- | --- |
 | **HOME** | voice level 0..15 | treble level (10 kHz) | bass level (100 Hz) | the keys' velocity |
 | **FX** | tremolo rate 1..15 | tremolo depth (0 = off) | chorus rate 1..15 | chorus depth (0 = off) |
-| **ENV** | middle frequency 200 Hz..8 kHz | middle level | band width 1..8 (higher = narrower) | |
+| **ENV** | middle frequency 400 Hz..4 kHz (8 steps, as the MKS-20) | middle level | band width 1..8 (higher = narrower) | voices 4..16 (the board's own voice stealing among them) |
 
 On every page: **PRESETS** the voice, **ALGORITHM** the MIDI receive channel (OMNI, 1..16), **OCT- / OCT+** the
-octave, **PLAY** the sustain pedal (latched), **MASTER** the volume. Levels go -12..+12 dB in 1.5 dB steps, as on
+octave, **PLAY** the sustain pedal (latched), **MASTER** the volume. Levels go -10.5..+10.5 dB in 1.5 dB steps, as on
 the MKS-20. MIDI in: notes with velocity, CC 64, program change (the voice); the keys go out on USB-MIDI.
 Everything but the pedal is kept in flash. The settings are global, not per voice (the MKS-20 keeps them per tone).
 

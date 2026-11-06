@@ -14,9 +14,10 @@
  *                     attached; fm1_guard_unlock_top() reopens it.
  *   bus-invalid       fetch/read/write of unmapped space (NULL page, XIP
  *                     writes) -> DBG_MSG bits 4, 5, 16..21.
- *   PC limit          instruction fetch outside [0x02000120, _etext] and the RAM code (.ram_text, and
- *                     RDPNO's .fast at the start of .data: one window from the one to the other)
- *                     -> DBG_MSG bit 12.
+ *   PC limit          instruction fetch outside [0x02000120, _etext] and the RAM code (.ram_text and
+ *                     .c1_text, and RDPNO's .fast at the start of .data: one window from the one to the
+ *                     other) -> DBG_MSG bit 12. The PC limits apply to the second core too
+ *                     (fm1_cpu1.h): fm1_guard_pc_open() while it starts.
  */
 #pragma once
 #include <stdint.h>
@@ -51,6 +52,11 @@ static void fm1__dbg_lock(void)
     if (FM1_DBG_WR_EN & 1u)
         FM1_DBG_WR_EN = 0xE7u;
 }
+
+/* the PC limits apply to the second core too, and it starts in the chip's ROM (found by Melodee's dual-core
+ * work: DBG bit 10, c1_pc_limit_err_r): open them while it starts, then fm1_guard_enable(FM1_GUARD_PC)
+ * again (X0X, hal/fm1_guard.h; as Clipper's) */
+static void fm1_guard_pc_open(void);
 
 static void fm1_guard_enable(uint32_t which)
 {
@@ -87,6 +93,16 @@ static void fm1_guard_enable(uint32_t which)
             FM1_PC_LIMIT1_H = re > rs ? re - 1u : (uint32_t)(uintptr_t)_etext;
         }
     }
+    fm1__dbg_lock();
+}
+
+static void fm1_guard_pc_open(void)
+{
+    fm1__dbg_unlock();
+    FM1_PC_LIMIT0_L = 0u;
+    FM1_PC_LIMIT0_H = 0xFFFFFFFFu;
+    FM1_PC_LIMIT1_L = 0u;
+    FM1_PC_LIMIT1_H = 0xFFFFFFFFu;
     fm1__dbg_lock();
 }
 

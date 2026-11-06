@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* fx.c: what the MKS-20 does after its board, at 44.1 kHz, integers only:
- *   voice level -> bass shelf (100 Hz) -> middle bell (frequency, level, width) -> treble shelf (10 kHz)
+ *   voice level -> bass shelf (100 Hz) -> middle bell (400 Hz..4 kHz, level, width) -> treble shelf (10 kHz),
+ *   -10.5..+10.5 dB in 1.5 dB steps, as the MKS-20's (the shelves gentle: fx_tables.h)
  *   -> chorus (a BBD-like modulated delay, the two sides in antiphase) -> tremolo (stereo, in antiphase)
  * The equalizer is Andrew Simper's linear trapezoidal SVF; its constants are fx_tables.h (tools/gen_fx_tables.py),
  * the middle band's worked out here from them with one 32-bit division. The chorus and the tremolo are new
@@ -12,8 +13,8 @@
 
 typedef struct {                                /* the panel's values, as the screen shows them */
     uint8_t vol;                                /* 0..15 */
-    uint8_t bass, treble, mid_level;            /* 0..16: -12..+12 dB in 1.5 dB steps, 8 = 0 dB */
-    uint8_t mid_freq;                           /* 0..11: FX_MID_HZ */
+    uint8_t bass, treble, mid_level;            /* 0..14: -10.5..+10.5 dB in 1.5 dB steps, 7 = 0 dB (FX_LEVEL0) */
+    uint8_t mid_freq;                           /* 0..7: FX_MID_HZ, 400 Hz .. 4 kHz */
     uint8_t width;                              /* 0..7: 1..8 on the screen, higher = narrower */
     uint8_t cho_rate, cho_depth;                /* 1..15, 0..15 (0 = off) */
     uint8_t trm_rate, trm_depth;                /* 1..15, 0..15 (0 = off) */
@@ -38,9 +39,9 @@ static void svf_load(svf_c_t *c, const int32_t *t)
 static void fx_set(const fx_par_t *p)
 {
     fx_c_t *c = &fx_cs[fx_cur ^ 1u];
-    uint32_t lb = p->bass < FX_NLEVEL ? p->bass : 8u, lt = p->treble < FX_NLEVEL ? p->treble : 8u;
-    uint32_t lm = p->mid_level < FX_NLEVEL ? p->mid_level : 8u;
-    uint32_t f = p->mid_freq < FX_NMIDF ? p->mid_freq : 5u, w = p->width < FX_NWIDTH ? p->width : 3u;
+    uint32_t lb = p->bass < FX_NLEVEL ? p->bass : FX_LEVEL0, lt = p->treble < FX_NLEVEL ? p->treble : FX_LEVEL0;
+    uint32_t lm = p->mid_level < FX_NLEVEL ? p->mid_level : FX_LEVEL0;
+    uint32_t f = p->mid_freq < FX_NMIDF ? p->mid_freq : 3u, w = p->width < FX_NWIDTH ? p->width : 3u;
     svf_load(&c->bass, &FX_BASS[6u * lb]);
     svf_load(&c->treble, &FX_TREBLE[6u * lt]);
     {   /* the bell: g = tan(pi f / fs), k = 1 / (Q A); a1 = 1 / (1 + g (g + k)), m1 = k (A^2 - 1) */
@@ -54,9 +55,9 @@ static void fx_set(const fx_par_t *p)
         c->mid.m1 = (int32_t)(((int64_t)k * FX_A2M1[lm]) >> 24);
         c->mid.m2 = 0;
     }
-    c->on_bass = lb != 8u;
-    c->on_treble = lt != 8u;
-    c->on_mid = lm != 8u;
+    c->on_bass = lb != FX_LEVEL0;
+    c->on_treble = lt != FX_LEVEL0;
+    c->on_mid = lm != FX_LEVEL0;
     c->vol = FX_VOL[p->vol & 15u];
     c->cho_inc = FX_CHO_INC[(p->cho_rate ? p->cho_rate : 1u) - 1u];
     c->cho_amp = (uint32_t)(p->cho_depth & 15u) * 9u * 256u;   /* up to 135 samples: +-3 ms */

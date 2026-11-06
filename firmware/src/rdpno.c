@@ -9,11 +9,14 @@
  *   SELECT     the page: HOME -> FX -> ENV; or HOME, FX, ENV themselves
  *   HOME       KNOB 1 voice level, 2 treble level, 3 bass level, 4 the keys' velocity (the FM-1 feels none)
  *   FX         KNOB 1 tremolo rate, 2 tremolo depth, 3 chorus rate, 4 chorus depth (depth 0 = off)
- *   ENV        KNOB 1 middle frequency, 2 middle level, 3 band width (the middle equalizer)
+ *   ENV        KNOB 1 middle frequency, 2 middle level, 3 band width (the middle equalizer), 4 voices: how many
+ *              the board plays (4..16; its own voice stealing among them; fewer = less load: rdp.c rdp_voices)
  *   OCT- OCT+  the octave of the keys
  *   PLAY       the sustain pedal, latched (lit while it is down); CC 64 from MIDI works too
  *   MASTER     the volume (platform.c)
  *   MIDI in    notes, CC 64, program change (the voice), on USB and the TRS jack; the keys go out on USB too
+ *   2 CORES    the odd voices of the board's sound chip run on the second core (platform.c, from Clipper); a unit
+ *              whose second core fails its test, or a job, runs on one (the screen says 1 CORE)
  * Everything but the pedal is kept in flash (2 s after the last change, once silent).
  *
  * The board runs at 20 kHz (some voices 32 kHz) inside the audio interrupt; a linear interpolation takes it to
@@ -24,6 +27,8 @@ static void app_idle(void);
 #define APP_NAME "RDPNO"
 #endif
 #include "platform.c"
+#define RDP_SPLIT_RUN(fn, arg) cpu1_run((fn), (arg))   /* the odd voices on the second core (platform.c) */
+#define RDP_SPLIT_WAIT() cpu1_wait()
 #include "rdp.c"
 #include "fx.c"
 
@@ -42,7 +47,8 @@ static RDP_FAST void app_audio(int32_t *out, uint32_t n)
     uint32_t t0 = fm1_ticks(), t;
 #endif
     if (!rdp_ready) return;
-    rdp_take();                                 /* a voice change the main loop has unpacked */
+    rdp_take();                                 /* a voice change: the render pauses until the main loop has done it */
+    if (rdp_paused) return;
     step = rdp_khz32 ? 47554u : 29721u;         /* 32000 or 20000 * 65536 / 44100 */
     for (i = 0; i < n; i++) {
         int32_t s, l, r;
@@ -69,20 +75,20 @@ static RDP_FAST void app_audio(int32_t *out, uint32_t n)
 
 /* ---- what is kept: the voice, MIDI, the keys, and the MKS-20's edit parameters */
 static struct {
-    uint8_t patch, ch, vel, oct, page;
+    uint8_t patch, ch, vel, oct, page, voices;
     fx_par_t fx;
 } set;
 static void set_defaults(void)
 {
-    set.patch = 0; set.ch = 0; set.vel = 100; set.oct = 0; set.page = 0;
-    set.fx.vol = 15; set.fx.bass = 8; set.fx.treble = 8; set.fx.mid_level = 8; set.fx.mid_freq = 5;
+    set.patch = 0; set.ch = 0; set.vel = 100; set.oct = 0; set.page = 0; set.voices = 8;
+    set.fx.vol = 15; set.fx.bass = FX_LEVEL0; set.fx.treble = FX_LEVEL0; set.fx.mid_level = FX_LEVEL0; set.fx.mid_freq = 3;
     set.fx.width = 3; set.fx.cho_rate = 8; set.fx.cho_depth = 0; set.fx.trm_rate = 8; set.fx.trm_depth = 0;
 }
 static int set_ok(void)
 {
     const fx_par_t *f = &set.fx;
     return set.patch < RDP_NPATCH && set.ch <= 16u && set.vel && set.vel <= 127u && (int8_t)set.oct >= -2 &&
-           (int8_t)set.oct <= 2 && set.page < 3u && f->vol <= 15u && f->bass < FX_NLEVEL && f->treble < FX_NLEVEL &&
+           (int8_t)set.oct <= 2 && set.page < 3u && set.voices >= 4u && set.voices <= 16u && f->vol <= 15u && f->bass < FX_NLEVEL && f->treble < FX_NLEVEL &&
            f->mid_level < FX_NLEVEL && f->mid_freq < FX_NMIDF && f->width < FX_NWIDTH && f->cho_rate &&
            f->cho_rate <= 15u && f->cho_depth <= 15u && f->trm_rate && f->trm_rate <= 15u && f->trm_depth <= 15u;
 }
@@ -95,12 +101,14 @@ static void pedal(uint32_t on) { sustain = on; rdp_midi(0xB0, 64, on ? 127u : 0u
 
 /* ---- the pages: four knob rows each */
 enum { PG_HOME, PG_FX, PG_ENV, PG_N };
-enum { V_VOL, V_TREBLE, V_BASS, V_VEL, V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH, V_MFREQ, V_MLEVEL, V_WIDTH, V_NONE };
+enum { V_VOL, V_TREBLE, V_BASS, V_VEL, V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH, V_MFREQ, V_MLEVEL, V_WIDTH, V_VOICES,
+       V_NONE };
 static const char *const PAGE_NAME[PG_N] = {"HOME", "FX: TREMOLO / CHORUS", "ENV: MIDDLE EQ"};
 static const uint8_t PAGE_ROW[PG_N][4] = {
-    {V_VOL, V_TREBLE, V_BASS, V_VEL}, {V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH}, {V_MFREQ, V_MLEVEL, V_WIDTH, V_NONE}};
+    {V_VOL, V_TREBLE, V_BASS, V_VEL}, {V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH}, {V_MFREQ, V_MLEVEL, V_WIDTH, V_VOICES}};
 static const char *const VAL_NAME[V_NONE] = {"VOICE LEVEL", "TREBLE LEVEL", "BASS LEVEL", "KEY VELOCITY",
-    "TREMOLO RATE", "TREMOLO DEPTH", "CHORUS RATE", "CHORUS DEPTH", "MIDDLE FREQ", "MIDDLE LEVEL", "BAND WIDTH"};
+    "TREMOLO RATE", "TREMOLO DEPTH", "CHORUS RATE", "CHORUS DEPTH", "MIDDLE FREQ", "MIDDLE LEVEL", "BAND WIDTH",
+    "VOICES"};
 
 static uint8_t *val_ptr(uint32_t v)
 {
@@ -115,13 +123,15 @@ static uint8_t *val_ptr(uint32_t v)
     case V_CDEPTH: return &set.fx.cho_depth;
     case V_MFREQ: return &set.fx.mid_freq;
     case V_MLEVEL: return &set.fx.mid_level;
+    case V_VOICES: return &set.voices;
     default: return &set.fx.width;
     }
 }
 static void val_turn(uint32_t v, int32_t e)     /* a knob turned e detents */
 {
-    static const uint8_t LO[V_NONE] = {0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0};
-    static const uint8_t HI[V_NONE] = {15, 16, 16, 127, 15, 15, 15, 15, FX_NMIDF - 1u, 16, FX_NWIDTH - 1u};
+    static const uint8_t LO[V_NONE] = {0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 4};
+    static const uint8_t HI[V_NONE] = {15, FX_NLEVEL - 1u, FX_NLEVEL - 1u, 127, 15, 15, 15, 15, FX_NMIDF - 1u, FX_NLEVEL - 1u,
+                                       FX_NWIDTH - 1u, 16};
     uint8_t *p = val_ptr(v);
     int32_t x = (int32_t)*p + (v == V_VEL ? 4 * e : e);
     *p = (uint8_t)(x < LO[v] ? LO[v] : x > HI[v] ? HI[v] : x);
@@ -136,9 +146,9 @@ static char *put_u(char *p, uint32_t v)
     while (n) *p++ = t[--n];
     return p;
 }
-static char *put_db(char *p, uint32_t lvl)      /* 0..16 -> "-12.0" .. "+12.0" in 1.5 dB steps */
+static char *put_db(char *p, uint32_t lvl)      /* 0..14 -> "-10.5" .. "+10.5" in 1.5 dB steps */
 {
-    int32_t t = ((int32_t)lvl - 8) * 15;        /* tenths of a dB */
+    int32_t t = ((int32_t)lvl - (int32_t)FX_LEVEL0) * 15;   /* tenths of a dB */
     uint32_t a = (uint32_t)(t < 0 ? -t : t);
     *p++ = t < 0 ? '-' : t > 0 ? '+' : ' ';
     p = put_u(p, a / 10u);
@@ -197,6 +207,7 @@ static void draw_midi(int32_t oct, uint32_t ch, uint32_t sus)
     p = put(p, "MIDI RX-CH "); if (ch) p = put_u(p, ch); else p = put(p, "OMNI");
     p = put(p, "  OCT "); *p++ = oct < 0 ? '-' : '+'; *p++ = (char)('0' + (oct < 0 ? -oct : oct));
     if (sus) p = put(p, "  SUS");
+    p = put(p, cpu1_on() ? "  2 CORES" : "  1 CORE");
     *p = 0;
     draw_text_box(0, 186, 240, &FONT_S, s, C_OFF, 1);
 }
@@ -248,6 +259,7 @@ static void app_main(void)
     for (k = 0; k < 4u; k++) rows_drawn[k] = ~0u;
     if (settings_load(&set, sizeof set) || !set_ok()) set_defaults();
     fx_set(&set.fx);
+    rdp_voices = set.voices;
 
     lcd_fill(0, 0, 240, 240, C_BLACK);
     draw_text_box(0, 100, 240, &FONT_S, APP_NAME "  v" APP_VER, C_ACC, 1);
@@ -312,7 +324,8 @@ static void app_main(void)
             if ((e = fm1_enc_take(KNOB[k])) != 0 && PAGE_ROW[set.page][k] != V_NONE) {
                 hot = PAGE_ROW[set.page][k];
                 val_turn(hot, e);
-                if (hot != V_VEL) fx_dirty = 1;
+                if (hot == V_VOICES) rdp_voices = set.voices;
+                else if (hot != V_VEL) fx_dirty = 1;
                 dirty = 1; t_change = fm1_ms;
             }
         if (fx_dirty) fx_set(&set.fx);
@@ -348,7 +361,7 @@ static void app_main(void)
             st = v == V_NONE ? 0xFFFFu : (uint32_t)*val_ptr(v) | v << 8 | (uint32_t)(v == hot) << 12;
             if (st != rows_drawn[k]) { rows_drawn[k] = st; draw_row(k, v, v == hot); }
         }
-        if ((st = (uint32_t)(oct + 2) | set.ch << 4 | sustain << 9) != midi_drawn) {
+        if ((st = (uint32_t)(oct + 2) | set.ch << 4 | sustain << 9 | (uint32_t)cpu1_on() << 10) != midi_drawn) {
             midi_drawn = st;
             draw_midi(oct, set.ch, sustain);
         }
