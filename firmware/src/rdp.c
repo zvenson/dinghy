@@ -68,17 +68,16 @@ typedef struct {
     u8 en, inv, ci, pitch_hi;
 } sa_part_t;
 static sa_part_t sa[SA_NV][16];
-/* (words, not halfwords, and the voice mask in two: the even voices are core 0's, the odd ones core 1's, and
- * neither writes a word the other does) */
+/* (words, not halfwords, one per voice: the two cores work on different voices and neither writes a word the
+ * other does) */
 static u32 sa_live[SA_NV];                      /* bit p: part p sounds (not: env_value == 0 and env_dest == 0) */
 static u32 sa_zero[SA_NV];                      /* bit p: fell silent last sample: its sub phase goes to 0 */
-static u32 sa_vm[2];                            /* bit v: voice v has a part in sa_live or sa_zero; [v & 1] */
+static u32 sa_vact[SA_NV];                      /* voice v has a part in sa_live or sa_zero: something to do */
 static const u8 *sa_page[128];                  /* page of the wave ROM -> its bytes, in RAM or in the flash */
 static u32 rdp_quiet = 10;                      /* see IC8 in sa_half: 16 = no part is left out */
 static RDP_FAST void sa_vmark(u32 vi)
 {
-    if (sa_live[vi] | sa_zero[vi]) sa_vm[vi & 1u] |= 1u << vi;
-    else sa_vm[vi & 1u] &= ~(1u << vi);
+    sa_vact[vi] = (sa_live[vi] | sa_zero[vi]) != 0;
 }
 static u8 sa_irq_id, sa_irq;
 static volatile u32 rdp_active;                 /* parts that sounded in the last sample (the screen shows it) */
@@ -196,11 +195,11 @@ static const u8 SA_LOW[1024] = {                /* the lowest set bit of a 10-bi
 typedef struct { s32 result; u32 active, irq, irq_id; u32 pad[12]; } sa_out_t;   /* (a cache line each) */
 static sa_out_t sa_out[2] __attribute__((aligned(64)));
 
-static RDP_FAST void sa_half(u32 c)             /* one sample of the even (c = 0) or the odd voices (c = 1) */
+static RDP_FAST void sa_half(u32 c, u32 vm)     /* one sample of the voices in vm (core c's: sa_update) */
 {
     s32 result = 0;
-    u32 vi, active = 0, vm, prior = sa_irq, irq = 0, irq_id = 0;
-    for (vi = c, vm = sa_vm[c] >> c; vm; vi += 2u, vm >>= 2) {   /* the voices with something to do */
+    u32 vi, active = 0, prior = sa_irq, irq = 0, irq_id = 0;
+    for (vi = 0; vm; vi++, vm >>= 1) {          /* the voices with something to do */
         u32 live, m0, m1, gone = 0, todo;
         if (!(vm & 1u)) continue;
         live = sa_live[vi];
@@ -279,7 +278,7 @@ static RDP_FAST void sa_half(u32 c)             /* one sample of the even (c = 0
     sa_out[c].irq_id = irq_id;
 }
 
-static RDP_FAST void sa_job(uint32_t c) { sa_half(c); }   /* (core 1's job) */
+static RDP_FAST void sa_job(uint32_t vm) { sa_half(1u, vm); }   /* (core 1's job: its voices) */
 
 /* the split: RDP_SPLIT_RUN(fn, arg) hands fn(arg) to the second core (1 = taken), RDP_SPLIT_WAIT() waits for it
  * (0 = done). The app defines them (rdpno.c: platform.c's cpu1_run, cpu1_wait); without, one core does both */
@@ -290,11 +289,32 @@ static RDP_FAST void sa_job(uint32_t c) { sa_half(c); }   /* (core 1's job) */
 static volatile u32 rdp_split_on = 1;           /* (the app may switch it off) */
 static volatile u32 rdp_split_used;             /* the last sample had core 1's help */
 
+/* Which voices core 1 renders (sa_c1): every 32 samples the voices with something to do are dealt out by the
+ * parts they sound, each to the core with fewer so far (core 1 first: core 0 also hands out the job), so that
+ * both finish at about the same time. With fewer than 8 parts, core 0 does them all (a job costs too). */
+static u32 sa_c1, sa_deal;
+static const u8 SA_POP4[16] = {0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4};
+static RDP_FAST void sa_share(void)
+{
+    u32 vi, n0 = 0, n1 = 0, c1 = 0;
+    for (vi = 0; vi < SA_NV; vi++) {
+        u32 l = sa_live[vi], k;
+        if (!sa_vact[vi]) continue;
+        k = 1u + SA_POP4[l & 15u] + SA_POP4[(l >> 4) & 15u] + SA_POP4[l >> 8];
+        if (n1 <= n0) { c1 |= 1u << vi; n1 += k; }
+        else n0 += k;
+    }
+    sa_c1 = n0 + n1 >= 8u + 2u ? c1 : 0u;       /* (k counts one for the voice itself) */
+}
+
 static RDP_FAST s32 sa_update(void)             /* one sample of all voices (SoundChip::update) */
 {
-    u32 split = rdp_split_on && sa_vm[1] && RDP_SPLIT_RUN(sa_job, 1u);
-    sa_half(0);
-    if (!split) sa_half(1);
+    u32 vi, vm = 0, split;
+    for (vi = 0; vi < SA_NV; vi++) vm |= sa_vact[vi] << vi;
+    if (!(sa_deal++ & 31u)) sa_share();
+    split = rdp_split_on && (vm & sa_c1) && RDP_SPLIT_RUN(sa_job, vm & sa_c1);
+    sa_half(0, split ? vm & ~sa_c1 : vm);
+    if (!split) sa_out[1].result = 0, sa_out[1].active = 0, sa_out[1].irq = 0;
     else if (RDP_SPLIT_WAIT() != 0) sa_out[1].result = 0, sa_out[1].active = 0, sa_out[1].irq = 0;   /* (given up) */
     rdp_split_used = split;
     if (!sa_irq && (sa_out[0].irq | sa_out[1].irq)) {   /* the first part in (voice, part) order, as one loop has it */
@@ -3027,6 +3047,7 @@ static RDP_FAST u8 mcu_read(u32 addr)
 {
     addr &= 0xFFFFu;
     if (addr >= 0xC000u) return rdp_prog[(addr - 0xC000u) & 0x1FFFu];
+    if (addr - 0x20u < 0x1000u - 0x20u) return rdp_ram[addr];   /* (the RAM: the next most read) */
     if (addr >= 0x4000u) {                      /* the parameter ROM, 4 banks of 32 KB by the latch */
         u32 i = (addr - 0x4000u) | ((u32)latch_val & 3u) << 15;
         if (i - 0x8000u < 0x8000u) return rdp_params[i - 0x8000u];
@@ -3129,6 +3150,17 @@ static RDP_FAST void mcu_fast(void)                      /* the rest of the samp
 {
     u32 x = X, cc = CC;
     while (m_icount > 0) {                      /* (one instruction a turn, as the interpreter: same stops) */
+        if (!mcu_quiet()) {
+            /* Something waits (a command, the SA chip's end): as mcu_run_one, the lines first. While the CPU masks
+             * interrupts (CC I: in its handlers, where it takes the notes) none can be taken, and the
+             * interpreter's check would do nothing: go on here. Else back to the interpreter. */
+            if (!(cc & 0x10u)) break;
+            CC = (u8)cc; X = (u16)x;
+            if (!rdp_q_empty()) mcu_set_input(M6801_TIN_LINE, ASSERT_LINE);
+            if (sa_irq) mcu_set_input(M6800_IRQ_LINE, ASSERT_LINE);
+            if (m_nmi_pending) break;
+            goto other;                         /* (the scan below runs only with nothing waiting) */
+        }
         switch (PC) {
         case 0xE379:                                                                         /* SEI */
             while (m_icount >= 26 && x + 0x70u < 0x1000u) {     /* whole passes at once, while they fit */
@@ -3198,16 +3230,16 @@ static RDP_FAST void mcu_fast(void)                      /* the rest of the samp
         default: break;
         }
         if (0) { next: continue; }
-        {   /* any other instruction: the interpreter's, without its interrupt checks (nothing is pending) */
+        X = (u16)x; CC = (u8)cc;
+    other:
+        {   /* any other instruction: the interpreter's, without its interrupt checks (none could be taken) */
             u8 ireg;
-            X = (u16)x; CC = (u8)cc;
             pPPC = pPC;
             ireg = PC >= 0xC000u ? rdp_prog[(PC - 0xC000u) & 0x1FFFu] : mcu_read(PCD);
             PC++;
             hd63701_insn[ireg]();
             increment_counter(cycles_63701[ireg]);
             x = X; cc = CC;
-            if (!mcu_quiet()) break;            /* (a port or TCSR write may have raised one: back to the checks) */
         }
     }
 out:
@@ -3223,7 +3255,7 @@ static RDP_FAST s32 rdp_render(void)                     /* one sample; the audi
         m_icount += n;                          /* what the last instruction overran is owed */
         if (m_icount > n) m_icount = n;
         while (m_icount > 0) {
-            if (rdp_fast && mcu_quiet()) {
+            if (rdp_fast && (mcu_quiet() || (CC & 0x10u))) {
                 mcu_fast();
                 if (m_icount <= 0) break;
             }
