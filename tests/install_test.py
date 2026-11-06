@@ -6,7 +6,7 @@ The fake device is the one in web/test_web.mjs: identity on the handshake,
 then "device asks, host answers" reads of the logical image. Run from the repo root:
   python3 tests/install_test.py
 Also checks logical_image/product_of against web/fm1pkg.js (needs node, web/ and
-build/dinghy.fwsc, skipped otherwise: Dinghy has no web installer of its own; from genkigenki/sloop-fm1 smk37), the SMK-37 Pro identities, and the 20 / 36 block
+build/rdpno.fwsc, skipped otherwise: Dinghy has no web installer of its own; from genkigenki/sloop-fm1 smk37), the SMK-37 Pro identities, and the 20 / 36 block
 deinterleave against the stock SMK-37 Pro packages (a directory named by SMK_STOCK_DIR, skipped when unset)."""
 import io
 import queue
@@ -169,7 +169,7 @@ def package(product="FM-1_900", marker=True, size=0x2000, damage=False, blocks=2
     return bytes(raw)
 
 
-TMP = Path(tempfile.mkdtemp(prefix="dinghy-install-"))
+TMP = Path(tempfile.mkdtemp(prefix="rdpno-install-"))
 
 
 def pkgfile(name, raw):
@@ -363,7 +363,7 @@ def smk():
             image, n = I.deinterleave(raw)
             ok(not I.package_damage(image) and I.product_of(raw) == "SMK-37 Pro_" + old.stem[-3:],
                f"stock {old.name}: {n} blocks, identity {I.product_of(raw)}, CRCs ok")
-    clean = ROOT / "build/dinghy.fwsc"
+    clean = ROOT / "build/rdpno.fwsc"
     if clean.exists():
         raw = clean.read_bytes()
         image, n = I.deinterleave(raw)
@@ -372,12 +372,12 @@ def smk():
 
 
 def against_js():
-    clean = ROOT / "build/dinghy.fwsc"
-    for f in [clean, *sorted((ROOT / "build").glob("dinghy*-smk37*.fwsc"))]:   # (every package built)
+    clean = ROOT / "build/rdpno.fwsc"
+    for f in [clean, *sorted((ROOT / "build").glob("rdpno*-smk37*.fwsc"))]:   # (every package built)
         if f.exists():
             ok(I.LOADER_MARK in f.read_bytes(), f"{f.name} carries the Felucca loader marker")
     if not shutil.which("node") or not clean.exists() or not (ROOT / "web/fm1pkg.js").exists():
-        print("logical image vs fm1pkg.js: skipped (needs node, web/fm1pkg.js and build/dinghy.fwsc; Dinghy has no web/)")
+        print("logical image vs fm1pkg.js: skipped (needs node, web/fm1pkg.js and build/rdpno.fwsc; Dinghy has no web/)")
         return
     js = ("import { logicalImage, productOf } from %r; import { readFileSync } from 'node:fs';"
           "const p = readFileSync(process.argv[1]); process.stderr.write(productOf(p));"

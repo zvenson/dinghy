@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* A fake FM-1 (or SMK-37) on a computer: the app (firmware/src/dinghy.c) runs unchanged on it. platform.c includes
+/* A fake FM-1 (or SMK-37) on a computer: the app (firmware/src/rdpno.c) runs unchanged on it. platform.c includes
  * this file instead of the hardware when DINGHY_HOST is set. A script presses keys over time; out come
  * the screen (PPM, at the times SHOT asks) and the sound (WAV, as the FM-1 sends it over USB).
  *
  *   mkdir -p build/host
- *   cc -O2 -Wall -DDINGHY_HOST -Ifirmware/hal -Ifirmware/src -Ifirmware/gen -o build/host/dinghy firmware/src/dinghy.c
- *   build/host/dinghy build/host/dinghy        (-> build/host/dinghy.wav, build/host/dinghy-<ms>.ppm)
- *   build/host/dinghy OUT script.txt [FPS]    (your own script; with FPS: OUT-NNNNN.ppm, a frame every 1/FPS s:
+ *   cc -O2 -Wall -DDINGHY_HOST -Ifirmware/hal -Ifirmware/src -Ifirmware/gen -o build/host/rdpno firmware/src/rdpno.c
+ *   build/host/rdpno build/host/rdpno        (-> build/host/rdpno.wav, build/host/rdpno-<ms>.ppm)
+ *   build/host/rdpno OUT script.txt [FPS]    (your own script; with FPS: OUT-NNNNN.ppm, a frame every 1/FPS s:
  *                                             a film of your firmware, e.g. ffmpeg -r 30 -i OUT-%05d.ppm ...)
  *   tests/run_host.sh [script] does it all (BOARD=smk37: the SMK-37 build); DINGHY_PERF=1: instructions per sample
  *
@@ -142,6 +142,10 @@ static int midi_get(uint8_t *st, uint8_t *d1, uint8_t *d2)
 static void midi_send(uint32_t st, uint32_t d1, uint32_t d2) { printf("%6u ms  MIDI out %02X %u %u\n", fm1_ms, st, d1, d2); }
 
 static void app_audio(int32_t *out, uint32_t n);
+/* the second core (platform.c on an FM-1): here its job runs right away, on this one */
+static int cpu1_on(void) { return 1; }
+static int cpu1_run(void (*fn)(uint32_t), uint32_t arg) { fn(arg); return 1; }
+static int cpu1_wait(void) { return 0; }
 static void app_main(void);
 
 /* the script: at t ms, keys down (bit k = key k, 0 = F3), a button edge, a MIDI message. A script file (the second
@@ -220,7 +224,7 @@ static void read_script(const char *path)
     script_n = n;
 }
 
-static const char *host_out = "build/host/dinghy";
+static const char *host_out = "build/host/rdpno";
 static int16_t *wav;
 static uint32_t wav_n;
 

@@ -4,10 +4,14 @@
 # sloopDX's and OberVave's workflows. Run by hand (workflow_dispatch) for a test build without a release.
 name: release
 
+# RDPNO: by hand only. The build needs Roland's ROMs (tools/pack_roms.py), which are not in this repository: the
+# step below takes them from rdpiano's repository, and the packages it makes contain them. In a public repository
+# every signed-in GitHub user can download a workflow's artifact: it is kept one day only, and never published as
+# a release. Download it right after the run.
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
+  push:
+    branches: [build]          # (a push to the branch "build" builds too: no button needed)
 
 jobs:
   firmware:
@@ -39,12 +43,21 @@ jobs:
           done
           test -d ~/fw-AC79_AIoT_SDK
 
+      - name: The ROMs (rdpiano's roms/ folder; see the note at the top)
+        run: git clone --depth 1 https://github.com/giulioz/rdpiano ../rdpiano
+
       - name: Build (the SMK-37 first, the FM-1 last, as the tests expect)
         run: |
           BOARD=smk37 sh build.sh
           BOARD=smk37 MODEL=elite sh build.sh
           BOARD=smk37 MODEL=mke sh build.sh
           sh build.sh
+
+      - name: CPU load on fm1-emu (strict, 240 MHz)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libasound2-dev libudev-dev libx11-dev libxkbcommon-dev \
+              libwayland-dev libxcursor-dev libxrandr-dev libxi-dev pkg-config >/dev/null
+          sh tools/emu_load.sh ../fm1-emu || echo "::warning title=fm1-emu::the load measurement did not run"
 
       - name: Host tests
         run: sh tests/run_tests.sh
@@ -57,26 +70,27 @@ jobs:
           BOARD=smk37 MODEL=elite sh build.sh --release "$V"
           BOARD=smk37 MODEL=mke sh build.sh --release "$V"
           sh build.sh --release "$V"
-          ls -l build/dinghy-"$V"*.fwsc
-          (cd build && sha256sum dinghy-"$V"*.fwsc > SHA256SUMS)
+          ls -l build/rdpno-"$V"*.fwsc
+          (cd build && sha256sum rdpno-"$V"*.fwsc > SHA256SUMS)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dinghy-fwsc
-          path: build/dinghy*.fwsc
+          name: rdpno-fwsc
+          path: build/rdpno*.fwsc
           if-no-files-found: error
+          retention-days: 1
 
       - name: Attest the packages (tags only)
         if: github.ref_type == 'tag'
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: build/dinghy-[0-9]*.fwsc
+          subject-path: build/rdpno-[0-9]*.fwsc
 
       - name: Release (tags only)
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            build/dinghy-[0-9]*.fwsc   # (the release builds, not the dev ones: dinghy-smk37.fwsc)
+            build/rdpno-[0-9]*.fwsc   # (the release builds, not the dev ones: rdpno-smk37.fwsc)
             build/SHA256SUMS
           generate_release_notes: true

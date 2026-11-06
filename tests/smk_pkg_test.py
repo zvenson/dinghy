@@ -24,7 +24,7 @@ def ok(cond, what):
 
 
 raw = Path(sys.argv[1]).read_bytes()
-want_product = sys.argv[2] if len(sys.argv) > 2 else "SMK-37 Pro_990"
+want_product = sys.argv[2] if len(sys.argv) > 2 else "SMK-37 Pro_950"
 image, n = I.deinterleave(raw)
 ok(n == 20 and I.product_of(raw) == want_product and not I.package_damage(image),
    f"identity {I.product_of(raw)}, 20 blocks, CRCs ok")
