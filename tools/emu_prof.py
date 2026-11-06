@@ -57,13 +57,14 @@ print("::notice title=fm1-emu profile (three keys struck again)::" + "%0A".join(
 if len(sys.argv) > 4:
     want, lines, on = sys.argv[4], [], False
     for ln in open(dis, errors="replace"):
-        if re.match(r"^[0-9a-f]+ <" + re.escape(want) + r">:", ln):
+        if re.search(r"<" + re.escape(want) + r">:\s*$", ln):
             on = True
-        elif on and re.match(r"^[0-9a-f]+ <", ln):
+            continue
+        elif on and re.search(r"^\S+ <[^>]+>:\s*$", ln):
             break
         if on:
             m = re.match(r"^\s*([0-9a-f]+):\s+(?:[0-9a-f]{2} )+\s*\t(.*)$", ln)
             if m:
                 pc = int(m.group(1), 16)
                 lines.append(f"{100 * by_pc.get(pc, 0) / max(total, 1):4.1f} {pc:08x} {m.group(2).strip()}")
-    print(f"::notice title=code of {want}::" + "%0A".join(lines))
+    print(f"::notice title=code of {want}::" + ("%0A".join(lines) if lines else "(not found in the disassembly)"))
