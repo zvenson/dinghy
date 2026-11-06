@@ -95,9 +95,35 @@ static int set_ok(void)
 
 #define KEY0 53u                                /* key 0 = F3 */
 static uint32_t sustain;
-static void note_on(uint32_t note, uint32_t vel) { rdp_midi(0x90, note, vel); }
-static void note_off(uint32_t note) { rdp_midi(0x80, note, 0); }
-static void pedal(uint32_t on) { sustain = on; rdp_midi(0xB0, 64, on ? 127u : 0u); }
+/* Everything for the board goes through a queue, in order, and a note-on leaves it no sooner than STAGGER_MS
+ * after the one before: keys struck together start a few ms apart, so their loud attacks (the board's busiest
+ * moments, and all the parts at full level) do not all land in one audio block. 6 keys: 15 ms from first to last. */
+#define STAGGER_MS 3u
+static struct { uint8_t st, d1, d2; } evq[64];
+static uint32_t evq_w, evq_r, ev_last_on, ev_any_on;
+static void ev_push(uint32_t st, uint32_t d1, uint32_t d2)
+{
+    if (evq_w - evq_r >= 64u) return;           /* (full: a burst no one plays; dropped) */
+    evq[evq_w & 63u].st = (uint8_t)st;
+    evq[evq_w & 63u].d1 = (uint8_t)d1;
+    evq[evq_w & 63u].d2 = (uint8_t)d2;
+    evq_w++;
+}
+static void ev_pump(void)                       /* main loop: what may go to the board now */
+{
+    while (evq_r != evq_w) {
+        uint32_t st = evq[evq_r & 63u].st, d1 = evq[evq_r & 63u].d1, d2 = evq[evq_r & 63u].d2;
+        uint32_t on = st == 0x90u && d2;
+        if (on && ev_any_on && fm1_ms - ev_last_on < STAGGER_MS) return;
+        if (!rdp_room(3)) return;               /* (the board's own queue is full: next time) */
+        rdp_midi(st, d1, d2);
+        if (on) { ev_last_on = fm1_ms; ev_any_on = 1; }
+        evq_r++;
+    }
+}
+static void note_on(uint32_t note, uint32_t vel) { ev_push(0x90, note, vel); }
+static void note_off(uint32_t note) { ev_push(0x80, note, 0); }
+static void pedal(uint32_t on) { sustain = on; ev_push(0xB0, 64, on ? 127u : 0u); }
 
 /* ---- the pages: four knob rows each */
 enum { PG_HOME, PG_FX, PG_ENV, PG_N };
@@ -335,7 +361,8 @@ static void app_main(void)
             if (want_patch != set.patch) { set.patch = (uint8_t)want_patch; dirty = 1; t_change = fm1_ms; }
             want_patch = 0xFFu;
         }
-        rdp_poll();                             /* after a voice change: the board's reload commands */
+        rdp_poll();                             /* a voice change, once the render has paused */
+        ev_pump();                              /* notes and the pedal to the board, the note-ons spaced */
 
         oct = (int8_t)set.oct;
         if ((st = keys | (uint32_t)set.page << 27 | (uint32_t)(oct + 2) << 29 | sustain << 31) != leds_set) {
