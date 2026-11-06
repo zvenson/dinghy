@@ -17,7 +17,8 @@ DIR (or RDP_ROMS) holds the ROM dumps as rdpiano names them (its roms/ folder). 
 not part of this repository, and a build that contains them is yours to keep, not to hand out.
 
 What goes into the header (all const, in flash):
-  RDP_WAVE      the three wave ROMs, descrambled, 3 bytes per address (exp sample, signs, delta), 384 KiB
+  RDP_WAVE      the three wave ROMs, descrambled, 3 bytes per address (exp sample, signs, delta), 384 KiB, in
+                pages of 1024 addresses, the most used first (PAGE_ORDER, RDP_PAGE_POS)
   RDP_WIN_*     the 32 KiB windows of the parameter ROM the set's patches use, descrambled, LZ4 blocks
   RDP_PROG      the CPU-B program (RD200_B, the one rdpiano's MIDI handshake is written for), 8 KiB
   RDP_PATCH[]   name, window, sample rate (20 or 32 kHz), offset in the window, address in the ROM
@@ -45,6 +46,15 @@ SETS = {   # rdpiano_juce PluginProcessor.cpp: patchToRomSet, patchToOffset, sam
         ("E-PIANO 1", 0x014260, 20), ("E-PIANO 2", 0x01BEF0, 32)]),
 }
 PROG = "RD200_B.bin"
+
+# The wave ROM's 128 pages (1024 addresses, 3072 bytes packed), most used first: rdp.c copies the first ones into
+# the FM-1's RAM (RDP_RAM_PAGES), out of reach of the flash cache's misses. Counted on a computer with every patch
+# of the set over the keyboard (rdp.c, rdp_quiet 10); pages no patch touched come last.
+PAGE_ORDER = {
+    "mks20a": [0, 1, 5, 4, 15, 14, 13, 12, 9, 8, 60, 19, 18, 3, 2, 61, 32, 7, 6, 33, 57, 56, 34, 36, 22, 23, 35, 37, 17, 16, 92, 50, 82, 86, 93, 83, 87, 51, 59, 88, 21, 20, 58, 90, 91, 89, 48, 101, 100, 49, 38, 39, 46, 47, 10, 11, 44, 40, 42, 43, 45, 55, 54, 41, 74, 62, 75, 76, 84, 85, 77, 64, 63, 96, 97, 65, 26, 27, 94, 95, 72, 66, 67, 73, 103, 68, 70, 102, 69, 71, 78, 79, 99, 98, 80, 81, 30, 31, 24, 25, 52, 53, 28, 29, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127],
+    "mks20b": [0, 1, 8, 9, 20, 21, 46, 15, 14, 18, 19, 3, 2, 66, 12, 13, 67, 17, 16, 6, 7, 54, 55, 11, 5, 10, 4, 126, 127, 23, 22, 50, 76, 112, 51, 58, 113, 59, 27, 64, 26, 65, 52, 24, 60, 25, 61, 53, 32, 33, 56, 57, 48, 49, 62, 63, 77, 34, 35, 68, 70, 72, 69, 73, 71, 74, 75, 47, 36, 37, 44, 45, 39, 38, 41, 40, 43, 42, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 30, 31, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 28, 29],
+    "mk80": [0, 1, 8, 9, 12, 13, 104, 14, 15, 20, 21, 5, 4, 6, 7, 18, 19, 28, 2, 29, 3, 22, 23, 26, 27, 80, 81, 82, 83, 124, 32, 10, 11, 30, 33, 56, 127, 126, 31, 57, 96, 97, 53, 52, 17, 16, 24, 42, 46, 43, 25, 105, 47, 55, 54, 34, 51, 50, 125, 35, 70, 58, 116, 108, 71, 72, 36, 109, 94, 40, 60, 120, 49, 48, 73, 100, 41, 59, 101, 37, 61, 121, 62, 68, 117, 63, 118, 69, 66, 95, 64, 79, 78, 119, 99, 65, 102, 98, 67, 44, 74, 45, 122, 75, 103, 123, 76, 77, 115, 114, 110, 84, 85, 93, 92, 87, 86, 112, 89, 88, 113, 91, 90, 111, 38, 39, 106, 107],
+}
 
 
 def bit(v, n):
@@ -136,6 +146,9 @@ def main():
         return d
 
     wave = wave_pack(*(rd(n, 0x20000) for n in s["wave"]))
+    order = PAGE_ORDER[a.set]
+    wave_sorted = b"".join(wave[pg * 3072:(pg + 1) * 3072] for pg in order)
+    page_pos = [order.index(pg) for pg in range(128)]
     params = params_unscramble(rd(s["params"], 0x20000))
     prog = prog_unscramble(rd(PROG, 0x2000))
     wins = sorted({off >> 15 for _, off, _, _ in s["patches"]})
@@ -143,7 +156,9 @@ def main():
              "#pragma once", "#include <stdint.h>", f'#define RDP_SET_NAME "{s["label"]}"',
              f"#define RDP_NPATCH {len(s['patches'])}u", f"#define RDP_NWIN {len(wins)}u",
              *(f'#define RDP_REF_{k} "{n}"' for k, n in zip(("IC5", "IC6", "IC7", "PARAMS"), (*s["wave"], s["params"]))),
-             carr("RDP_WAVE", wave), carr("RDP_PROG", prog)]
+             carr("RDP_WAVE", wave_sorted), carr("RDP_PROG", prog),
+             "/* where each of the 128 pages of the wave ROM is in RDP_WAVE (most used first) */",
+             "static const uint8_t RDP_PAGE_POS[128] = {" + ",".join(map(str, page_pos)) + "};"]
     total = len(wave) + len(prog)
     for k, w in enumerate(wins):
         raw = params[w << 15:(w + 1) << 15]

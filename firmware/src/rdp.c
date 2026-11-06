@@ -19,9 +19,9 @@
  *     bit for bit (tests/rdp_compare.sh).
  *
  *   rdp_init()            once, in the main loop, before the sound starts: reset, the handshake, patch 0
- *   rdp_select(i)         main loop: unpack patch i's window into the spare buffer; the render takes it over
- *   rdp_take()            audio interrupt, before the block: switch to a patch rdp_select has unpacked
- *   rdp_poll()            main loop: once rdp_take has switched, the board's reload commands (0x31 0x30)
+ *   rdp_select(i)         main loop: ask for patch i
+ *   rdp_take()            audio interrupt, before the block: pause the render for a patch change (rdp_paused)
+ *   rdp_poll()            main loop: once paused, unpack the patch's window, send the board's reload, go on
  *   rdp_midi(st, d1, d2)  main loop: note on/off, sustain (CC 64), program change, as the board understands them
  *   rdp_render()          audio interrupt: one sample at RDP_PATCH[i].khz (20 or 32 kHz), about +-2^17 */
 #include <stdint.h>
@@ -73,6 +73,7 @@ static sa_part_t sa[SA_NV][16];
 static u32 sa_live[SA_NV];                      /* bit p: part p sounds (not: env_value == 0 and env_dest == 0) */
 static u32 sa_zero[SA_NV];                      /* bit p: fell silent last sample: its sub phase goes to 0 */
 static u32 sa_vm[2];                            /* bit v: voice v has a part in sa_live or sa_zero; [v & 1] */
+static const u8 *sa_page[128];                  /* page of the wave ROM -> its bytes, in RAM or in the flash */
 static u32 rdp_quiet = 10;                      /* see IC8 in sa_half: 16 = no part is left out */
 static RDP_FAST void sa_vmark(u32 vi)
 {
@@ -247,7 +248,7 @@ static RDP_FAST void sa_half(u32 c)             /* one sample of the even (c = 0
                 continue;
             }
             {
-                const u8 *w = &RDP_WAVE[3u * (wa & 0x1FFFFu)];    /* (the board's program keeps it below) */
+                const u8 *w = sa_page[(wa >> 10) & 127u] + 3u * (wa & 1023u);   /* (the board keeps wa below 2^17) */
                 w0 = w[0]; w1 = w[1];
                 sel = ((wa >> 11) & 63u) > 4u;
                 pa = (w0 | (w1 & 0x3Fu) << 8) | sel;
@@ -313,8 +314,16 @@ static RDP_FAST s32 sa_update(void)             /* one sample of all voices (Sou
 static volatile u32 rdp_voices = 16;
 
 /* ---- the parameter ROM: the current patch's 32 KB window (unpacked into the pool), and its 3-byte header */
-static u8 rdp_win[2][0x8000] RDP_POOL;
-static const u8 *rdp_params = rdp_win[0];       /* the render's (the audio interrupt's) */
+static u8 rdp_win[0x8000] RDP_POOL;
+static const u8 *rdp_params = rdp_win;          /* the render's (the audio interrupt's) */
+
+/* The wave ROM's most used pages in RAM (pack_roms.py puts them first): the flash cache missed on nearly every
+ * read of a high note (it steps through hundreds of bytes a sample), ~300 cycles each. 90 pages of 3 KB fill the
+ * pool with the parameter window and the screen's canvas; the rest is read from the flash. */
+#ifndef RDP_RAM_PAGES
+#define RDP_RAM_PAGES 90u
+#endif
+static u8 rdp_wram[RDP_RAM_PAGES * 3072u] RDP_POOL;   /* (sa_page points into it) */
 static u8 rdp_hdr[3];
 static u32 rdp_khz32;                           /* the patch runs at 32 kHz (62 cycles a sample) */
 
@@ -3243,9 +3252,12 @@ static void rdp_midi(u32 st, u32 d1, u32 d2)   /* librdpiano Mcu::sendMidiCmd: w
     }
 }
 
-static volatile u32 rdp_spare;                  /* the window buffer the render does not read */
-static volatile u32 rdp_pending;                /* 1 + patch: unpacked into rdp_win[rdp_spare], for rdp_take */
-static volatile u32 rdp_taken;                  /* rdp_take switched: rdp_poll sends the board its reload */
+/* A patch change: rdp_select (main loop) asks; rdp_take (audio interrupt) pauses the render (rdp_paused: the
+ * board's time stands still, the app plays nothing); rdp_poll (main loop) unpacks the window into the one buffer
+ * while nothing reads it, sends the board its reload and lets the render go on. A few ms of silence: the board
+ * cuts its notes on a reload anyway. */
+static volatile u32 rdp_pending;                /* 1 + patch: asked for */
+static volatile u32 rdp_paused;                 /* the render stands still (rdp_take saw rdp_pending) */
 static u32 rdp_cur;
 
 static int rdp_unpack(u32 i, u8 *d)             /* patch i's window -> d; 0 = done */
@@ -3265,29 +3277,29 @@ static void rdp_set(u32 i, const u8 *win)       /* the render's side of a patch 
     rdp_cur = i;
 }
 
-static int rdp_select(u32 i)                    /* main loop: 0 = queued (the render takes it), -1 = busy or bad */
+static int rdp_select(u32 i)                    /* main loop: 0 = asked (rdp_take, rdp_poll do it), -1 = busy or bad */
 {
-    if (i >= RDP_NPATCH || rdp_pending || rdp_taken || rdp_unpack(i, rdp_win[rdp_spare])) return -1;
+    if (i >= RDP_NPATCH || rdp_pending) return -1;
     rdp_pending = 1u + i;
     return 0;
 }
 
-static RDP_FAST void rdp_take(void)                      /* audio interrupt, before rendering: a patch change that waits */
+static RDP_FAST void rdp_take(void)             /* audio interrupt, before rendering: pause for a patch change */
 {
-    u32 p = rdp_pending;
-    if (!p) return;
-    rdp_set(p - 1u, rdp_win[rdp_spare]);
-    rdp_spare ^= 1u;
-    rdp_taken = 1;
-    rdp_pending = 0;
+    if (rdp_pending) rdp_paused = 1;
 }
 
-static void rdp_poll(void)                      /* main loop, after rdp_take ran: the board reloads the patch */
+static void rdp_poll(void)                      /* main loop: once paused, the change itself */
 {
-    if (!rdp_taken || !rdp_room(2)) return;
-    rdp_push(0x31);                             /* (rdpiano_juce setCurrentProgram) */
-    rdp_push(0x30);
-    rdp_taken = 0;
+    u32 p = rdp_pending;
+    if (!p || !rdp_paused || !rdp_room(2)) return;
+    if (rdp_unpack(p - 1u, rdp_win) == 0) {
+        rdp_set(p - 1u, rdp_win);
+        rdp_push(0x31);                         /* the board reloads (rdpiano_juce setCurrentProgram) */
+        rdp_push(0x30);
+    }
+    rdp_pending = 0;
+    rdp_paused = 0;
 }
 
 static void rdp_reset(void)                     /* librdpiano Mcu::reset */
@@ -3310,10 +3322,14 @@ static int rdp_init(u32 patch)                  /* main loop, before the render 
     rdp_fast = 1;                               /* the scan's bytes, as mcu_scan knows them */
     for (i = 0; i < sizeof RDP_SCAN; i++)
         if (rdp_prog[(RDP_SCAN_PC & 0x1FFFu) + i] != RDP_SCAN[i]) rdp_fast = 0;
+    for (i = 0; i < sizeof rdp_wram; i++) rdp_wram[i] = RDP_WAVE[i];   /* the most used pages into RAM */
+    for (i = 0; i < 128u; i++) {
+        u32 pos = RDP_PAGE_POS[i];
+        sa_page[i] = (pos < RDP_RAM_PAGES ? rdp_wram : RDP_WAVE) + 3072u * pos;
+    }
     if (patch >= RDP_NPATCH) patch = 0;
-    if (rdp_unpack(patch, rdp_win[0])) return -1;
-    rdp_set(patch, rdp_win[0]);
-    rdp_spare = 1;
+    if (rdp_unpack(patch, rdp_win)) return -1;
+    rdp_set(patch, rdp_win);
     rdp_reset();
     rdp_push(0x30); rdp_push(0xE0); rdp_push(0x00); rdp_push(0x00);   /* the handshake, master tune 0 */
     for (i = 0; i < 1024u; i++) rdp_render();

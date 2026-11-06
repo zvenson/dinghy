@@ -47,7 +47,8 @@ static RDP_FAST void app_audio(int32_t *out, uint32_t n)
     uint32_t t0 = fm1_ticks(), t;
 #endif
     if (!rdp_ready) return;
-    rdp_take();                                 /* a voice change the main loop has unpacked */
+    rdp_take();                                 /* a voice change: the render pauses until the main loop has done it */
+    if (rdp_paused) return;
     step = rdp_khz32 ? 47554u : 29721u;         /* 32000 or 20000 * 65536 / 44100 */
     for (i = 0; i < n; i++) {
         int32_t s, l, r;
