@@ -16,7 +16,7 @@ LIVE="$E/target/release/fm1-live"
 OBJDUMP="${JIELI_TOOLCHAIN:-$HOME/.jieli/toolchain}/common/bin/objdump"
 "$OBJDUMP" -t build/rdpno.elf > build/rdpno.syms
 addr() { awk -v s="$1" '$NF == s { print $1 }' build/rdpno.syms; }
-A="$(addr rdp_load_max) $(addr rdp_parts_max) $(addr rdp_load_sum) $(addr rdp_load_n)"
+A="$(addr rdp_load_max) $(addr rdp_parts_max) $(addr rdp_load_sum) $(addr rdp_load_n) $(addr rdp_quiet_min)"
 MS="${EMU_MS:-4500}"   # (the keys from 1.9 s on: the load counts from 1.5 s, after the boot)
 CHORD8="1900:PLAY,2000:m903c64,2020:m904064,2040:m904364,2060:m904864,2080:m904c64,2100:m905064,2120:m905364,2140:m905864"
 CHORD16="$CHORD8,2200:m902b64,2220:m902f64,2240:m903264,2260:m903764,2280:m903b64,2300:m903e64,2320:m904564,2340:m904a64"
@@ -27,8 +27,8 @@ scene() {   # name, FM1_BENCH_KEYS
 import struct, sys
 ram = open("build/emu_ram.bin", "rb").read()
 def word(a): return struct.unpack_from("<I", ram, int(a, 16) - 0x01C00000)[0]
-mx, parts, sm, n = (word(a) for a in sys.argv[2:6])
-line = f"{sys.argv[1]}: CPU mean {sm / max(n, 1) / 10:.1f} %, peak {mx / 10:.1f} %, parts up to {parts}"
+mx, parts, sm, n, qmin = (word(a) for a in sys.argv[2:7])
+line = f"{sys.argv[1]}: CPU mean {sm / max(n, 1) / 10:.1f} %, peak {mx / 10:.1f} %, parts up to {parts}" + (f", brake down to {qmin}" if qmin < 10 else "")
 print(line)
 print(f"::notice title=fm1-emu load (strict, 240 MHz)::{line}")
 PY

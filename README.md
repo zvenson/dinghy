@@ -7,11 +7,17 @@ rdpiano emulates the board these pianos share: the HD6301 CPU running Roland's p
 from silicon analysis. RDPNO runs that emulation inside the FM-1's audio interrupt, reading the ROMs straight
 from flash, and plays it from the keys and MIDI.
 
-> **Status: experimental, not yet tried on an FM-1.** The emulation core gives librdpiano's samples bit for bit
-> (`tests/rdp_compare.sh`, all three ROM sets). The firmware builds with the JieLi toolchain: the GitHub workflow
-> builds the `.fwsc` packages, and the build's checks pass (the image fits the app slot with MKS-20 voices 1-3; no
-> 64-bit division, no chip ROM calls, RAM within limits). What only the device can show: whether the CPU keeps up
-> (see [What to check first](#what-to-check-first)).
+> **Status: experimental, plays on the FM-1.** The emulation core gives librdpiano's samples bit for bit
+> (`tests/rdp_compare.sh`, all three ROM sets), on one core or split over the chip's two. On the device, five
+> notes at once play clean, six mostly; hard, fast repeated six-note chords reach the limit. When the render
+> passes 90 % of the audio interrupt, an overload brake leaves out the faintest parts for a while (a `*` after
+> PARTS on the screen); the board itself never notices. Load on Joakim Eriksson's
+> [FM-1 emulator](https://github.com/joakimeriksson/fm1-emu) (strict mode, 240 MHz; the device is somewhat
+> slower), `tools/emu_load.sh`:
+>
+> | idle | one key | 4-note chord | 6 keys | 8-note chord | 16 notes |
+> | --- | --- | --- | --- | --- | --- |
+> | 6 % | 27 % peak | 47 % peak | 64 % peak | 73 % peak | 78 % peak |
 
 ## The panel, after the MKS-20's front
 
@@ -82,11 +88,9 @@ Back to another firmware: the [FM-1 Firmware Hub](https://thefirmwarehub.com), o
 1. **Does it fit?** `./build.sh` prints `image N B of 581564`. MKS-20 voices 1-3 fit (the workflow's build passes).
    Estimated with another compiler: about 580 KB for the MK-80 with all 8 tones (on the edge). If the build says the image is too big, leave out
    voices: `RDP_PATCHES=0,1 RDP_REPACK=1 ./build.sh` (every parameter window left out: 20..28 KB).
-2. **Is the CPU fast enough?** The screen shows the sound's share of the audio interrupt's 5.8 ms. On a computer
-   the emulation costs about 12,000 x86 instructions per board sample (20 kHz) with ~57 of the 160 parts sounding,
-   about 5,400 per 44.1 kHz output sample: several times what sloopDX's engines take. Play big sustained chords
-   and watch the PEAK: over ~90 % the sound will crackle. If so, the next step is splitting the 16 voices over
-   the chip's two cores.
+2. **Is the CPU fast enough?** The screen shows the sound's share of the audio interrupt's 5.8 ms (CPU, and the
+   PEAK of the last 2 s) and the parts sounding. Over ~90 % the brake steps in (`*`); if it still crackles,
+   fewer voices (ENV, knob 4) make the board steal earlier.
 3. **Does the timing hold?** `rdp_exact = 1` (the default, in `rdp.c`) runs the board's CPU at its real 2 MHz,
    100 cycles per sample; librdpiano runs 100 *instructions* per sample, about four times faster. The two sound
    the same on the test script (same envelopes; big chords start a little more staggered, as on the board), and
