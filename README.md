@@ -1,138 +1,110 @@
-<p align="center"><img src="assets/logo.svg" width="96" alt="Dinghy"></p>
+# RDPNO
 
-# Dinghy
+**Roland's SA pianos (MKS-20; also the Rhodes MK-80) on the M-VAVE FM-1: [rdpiano](https://github.com/giulioz/rdpiano)'s
+emulation of the CPU-B board, ported to the FM-1 on [Dinghy](https://github.com/zvenson/dinghy).**
 
-**The smallest firmware for the M-VAVE FM-1 to build your own on.**
+rdpiano emulates the board these pianos share: the HD6301 CPU running Roland's program and the SA sound chip,
+from silicon analysis. RDPNO runs that emulation inside the FM-1's audio interrupt, reading the ROMs straight
+from flash, and plays it from the keys and MIDI.
 
-Dinghy plays a sine wave on the keys, and that is all it does. Under it is everything an FM-1 firmware needs
-before it can be any fun: the update path, the USB rescue, MIDI over USB and the TRS jack (with clock), USB audio, the
-keys, knobs and LEDs, the screen, flash storage, and the same again for the M-Vave SMK-37. It all works, so you start
-with the part you actually want to write.
+> **Status: experimental, untested on the device.** The emulation core is checked on a computer: it gives
+> librdpiano's samples bit for bit (`tests/rdp_compare.sh`, all three ROM sets), and the firmware runs in host
+> mode. It has not yet been built with the JieLi toolchain nor run on an FM-1. The open questions are the CPU load
+> and whether the image fits (see [What to check first](#what-to-check-first)).
 
-```
-firmware/src/dinghy.c     <- your firmware: ~300 lines, a 4-voice sine. Start here.
-firmware/src/platform.c   <- the plumbing (boot, USB, MIDI, updates, audio ISR, storage). Done; read it, don't fight it.
-firmware/src/store.h      <- where your data lives in flash, per board
-firmware/src/*.c, hal/    <- Felucca's platform, as SLOOP / sloopDX / OberVave carry it; the SMK-37 layer
-```
+## The panel, after the MKS-20's front
 
-Dinghy is based on [Felucca](https://github.com/hugelton/Felucca) by Leo Kuroshita (Hügelton Instruments), with its
-platform as [SLOOP](https://github.com/isod89/sloop-fm1) (isod89) carries it: it keeps that platform and throws away the
-rest. The smallest boat of the family, after the felucca and the sloop.
+Three pages, as the MKS-20's edit parameters. **SELECT** turns through them, or **HOME**, **FX**, **ENV** jump to one
+(its button lights). The screen shows the voice on top (as the MKS-20's LCD), the page, its four knobs with their
+values (the last one turned in white), MIDI and the CPU load.
 
-<p align="center"><img src="docs/screen.png" width="240" alt="Dinghy's screen: the name, the note played, a keyboard with the keys that sound"></p>
+| | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
+| --- | --- | --- | --- | --- |
+| **HOME** | voice level 0..15 | treble level (10 kHz) | bass level (100 Hz) | the keys' velocity |
+| **FX** | tremolo rate 1..15 | tremolo depth (0 = off) | chorus rate 1..15 | chorus depth (0 = off) |
+| **ENV** | middle frequency 400 Hz..4 kHz (8 steps, as the MKS-20) | middle level | band width 1..8 (higher = narrower) | voices 4..16 (the board's own voice stealing among them) |
 
-> **Status: 0.4.** 0.3 was tested on the FM-1: the install, MIDI in (pitch exact, 4 voices), USB audio at
-> 44.1 / 48 kHz, the keys, the screen, the octave kept in flash, and back to another firmware through the hub.
-> 0.4 brings OberVave's platform over: the TRS MIDI IN, the clock, blobs and slots, the loader's screen, the SMK-37.
-> That code runs on the device in OberVave (FM-1 and SMK-37); Dinghy 0.4 itself is tested on the host only so far.
+On every page: **PRESETS** the voice, **ALGORITHM** the MIDI receive channel (OMNI, 1..16), **OCT- / OCT+** the
+octave, **PLAY** the sustain pedal (latched), **MASTER** the volume. Levels go -10.5..+10.5 dB in 1.5 dB steps, as on
+the MKS-20. MIDI in: notes with velocity, CC 64, program change (the voice); the keys go out on USB-MIDI.
+Everything but the pedal is kept in flash. The settings are global, not per voice (the MKS-20 keeps them per tone).
 
-## What you get
+The board gives 16 voices; the equalizer (Simper SVFs), the chorus (a modulated delay, the two sides in
+antiphase) and the stereo tremolo are new integer approximations in `fx.c`, not emulations of the MKS-20's
+analog circuits.
 
-| | |
-| --- | --- |
-| **Updates that always work** | `tools/fm1_install.py`, the web installers and the [FM-1 Firmware Hub](https://thefirmwarehub.com) reach your firmware over USB, so you (and your users) can always install the next build, or go back to the official firmware. |
-| **USB rescue** | Hold **OCT-** while switching on: no sound, only the updater. If your firmware crashes twice at boot, the FM-1 goes there by itself. |
-| **MIDI** | USB in and out (class compliant) and the FM-1's TRS MIDI IN, in one queue: `midi_get()` says where a message came from, `midi_send()`. Clock, start, stop and continue reach your app. |
-| **USB audio** | The FM-1 shows up as a 16-bit stereo audio input (44.1 or 48 kHz): record it into any DAW or phone. Nothing to do. |
-| **Panel** | 27 keys, 14 buttons, 7 encoders, the MASTER knob, the LEDs, by name (`BTN_PLAY`, `ENC_KNOB1`, ...). |
-| **Screen** | 240 x 240, text in two sizes, rectangles, lines, pixels. |
-| **Storage** | `settings_*` (4 KB), 8 blobs of 4 KB (`blob_*`), 8 slots of 16 KB (`slot_*`), each with a CRC, in places no other part of the flash is in reach of. |
-| **Never waits for the screen** | `LCD_IDLE`: your app reads MIDI and the keys while the screen's DMA runs, so a chord never stumbles over a redraw. |
-| **The SMK-37 too** | `./build.sh --board smk37` (Pro, Elite, MKE-P37): the same app on M-Vave's 37-key keyboard, with velocity, outer keys, 16 coloured pads, faders and wheels. [docs/SMK37.md](docs/SMK37.md) |
-| **An update screen** | The update loader draws your name in your colour, a progress bar and what to do, also after an install was cut off (FM-1). |
-| **A crash screen** | A fault shows where it happened (the PC), then the FM-1 restarts. |
-| **Host mode** | The same `dinghy.c` on your computer: the screen as an image, the sound as a WAV, scripted keys, knobs, MIDI (USB and TRS, a clock), SMK-37 pads and wheels. No FM-1 needed to try an idea. |
-| **Tests and CI** | `tests/run_tests.sh`: the host app, the flash maps, the update path, the loader, the installer. A tag `vX.Y` on GitHub builds, tests and releases the packages with a build attestation. |
-| **Checks** | The build fails on what bricks or breaks an FM-1 firmware: a 64-bit division, a call into the chip ROM, too much RAM, a register touched outside `hal/`. |
+## The ROMs
 
-## Build your own
-
-From nothing to your own firmware on the FM-1, step by step. Each step works before you go to the next.
-
-### 1. Copy it
-
-On GitHub: **Use this template** (top right on this page) or fork it, then clone your copy. Rename nothing yet:
-first make sure the unchanged Dinghy builds on your machine.
-
-### 2. Set up once
-
-You need Linux on x86-64 (or macOS / Windows with Docker or WSL), Python 3 with Pillow, the JieLi toolchain
-and three files of the JieLi AC79 SDK:
+The ROMs are Roland's. They are **not** in this repository, and a build contains them: build it for yourself, do
+not publish the packages. `tools/pack_roms.py` takes them from rdpiano's `roms/` folder:
 
 ```sh
-pip3 install Pillow mido python-rtmidi
-tools/get_toolchain.sh                      # JieLi's clang for the chip, to ~/.jieli/toolchain
+git clone --depth 1 https://github.com/giulioz/rdpiano ../rdpiano     # the ROMs are in ../rdpiano/roms
+python3 tools/pack_roms.py                    # -> firmware/gen/rdp_rom.h: MKS-20 voices 1-3, PIANO 1..3
+python3 tools/pack_roms.py --set mks20b       # MKS-20 voices 4-8: HARPSICHORD, CLAVI, VIBRAPHONE, E-PIANO 1, 2
+python3 tools/pack_roms.py --set mk80         # Rhodes MK-80 (Roland's 1989 piano on the same board): 8 tones
+python3 tools/pack_roms.py --patches 0,1      # only these voices of the set (saves flash, see below)
+```
+
+`./build.sh` runs it by itself when `firmware/gen/rdp_rom.h` is missing (`RDP_ROMS=/path/to/roms` if they are
+elsewhere, `RDP_SET=mks20b`, `RDP_REPACK=1` to pack again). **One wave set per build:** the MKS-20 itself has two
+(voices 1-3 and 4-8), each 384 KB, and an FM-1 app may have 568 KB in all. So all eight MKS-20 voices make two
+firmwares (`mks20a`, `mks20b`); the MK-80 has its eight on one set.
+
+## Build and install
+
+As Dinghy (its README has the details): Linux x86-64 (or Docker), Python 3 with Pillow, the JieLi toolchain and
+three files of the AC79 SDK.
+
+```sh
+pip3 install Pillow
+tools/get_toolchain.sh
 git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 \
     https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git ~/fw-AC79_AIoT_SDK
+./build.sh                                    # -> build/rdpno.fwsc
+python3 tools/fm1_install.py build/rdpno.fwsc # over USB
 ```
 
-On macOS the build runs the toolchain in a `linux/amd64` Docker container by itself (have Docker running).
-`JIELI_TOOLCHAIN` and `AC79_SDK` point elsewhere if your copies live somewhere else.
-
-### 3. Hear it without an FM-1
+Without an FM-1:
 
 ```sh
-tests/run_host.sh                           # -> build/host/dinghy.wav and screen PNGs
+tests/run_host.sh tests/scripts/rdpno.txt     # -> build/host/rdpno.wav and the screens as PNG
+tests/rdp_compare.sh ../rdpiano               # the C port against librdpiano, sample for sample
+sh tests/run_tests.sh                         # everything (after ./build.sh)
 ```
 
-Host mode runs the same `dinghy.c` on your computer: the sound as a WAV, the screen as images. Most ideas can be
-tried here first, in seconds.
+Back to another firmware: the [FM-1 Firmware Hub](https://thefirmwarehub.com), or hold **OCT-** while switching on
+(the USB rescue) and install from there.
 
-### 4. Your first change
+## What to check first
 
-Open [firmware/src/dinghy.c](firmware/src/dinghy.c) (~200 lines). The sound is `app_audio()`: it gets an empty
-buffer of stereo frames and adds to it. Make the sine a square:
+1. **Does it fit?** `./build.sh` prints `image N B of 581564`. Estimated with another compiler: about 560 KB for
+   MKS-20 A (fits), about 580 KB for MK-80 with all 8 tones (on the edge). If the build says the image is too big, leave out
+   voices: `RDP_PATCHES=0,1 RDP_REPACK=1 ./build.sh` (every parameter window left out: 20..28 KB).
+2. **Is the CPU fast enough?** The screen shows the sound's share of the audio interrupt's 5.8 ms. On a computer
+   the emulation costs about 12,000 x86 instructions per board sample (20 kHz) with ~57 of the 160 parts sounding,
+   about 5,400 per 44.1 kHz output sample: several times what sloopDX's engines take. Play big sustained chords
+   and watch the PEAK: over ~90 % the sound will crackle. If so, the next step is splitting the 16 voices over
+   the chip's two cores.
+3. **Does the timing hold?** `rdp_exact = 1` (the default, in `rdp.c`) runs the board's CPU at its real 2 MHz,
+   100 cycles per sample; librdpiano runs 100 *instructions* per sample, about four times faster. The two sound
+   the same on the test script (same envelopes; big chords start a little more staggered, as on the board), and
+   `rdp_exact = 0` is there to compare.
 
-```c
-s = ((int32_t)ph < 0 ? 8000 : -8000) * amp >> 15;     /* instead of s = (sine(ph) * amp) >> 15; */
-```
+## How it works
 
-Run `tests/run_host.sh` again and listen to `build/host/dinghy.wav`. The screen is drawn in `app_main()`, the keys
-are read there too: change the text, add a knob ([docs/API.md](docs/API.md) has every call).
+| File | |
+| --- | --- |
+| `firmware/src/rdp.c` | the board: librdpiano's `Mcu` (MAME's HD6301) and `SoundChip`, in C, no heap, no float. The ROM tables live in flash (3 bytes a wave address), the parameter ROM's 32 KB window of the patch is unpacked (LZ4) into the pool, the exponential tables are folded to 10 KB (`rdp_tables.h`), and the sound chip only visits the parts that sound |
+| `firmware/src/rdpno.c` | the app: keys, MIDI, the panel (HOME / FX / ENV), the screen; the board's 20/32 kHz resampled to 44.1 kHz |
+| `firmware/src/fx.c`, `fx_tables.h` | voice level, bass/middle/treble EQ, chorus, tremolo at 44.1 kHz; the constants from `tools/gen_fx_tables.py` |
+| `tools/pack_roms.py` | the ROMs, descrambled as librdpiano does it, into `firmware/gen/rdp_rom.h` |
+| `tests/rdp_test.c`, `rdp_ref.cpp`, `rdp_script.h`, `rdp_compare.sh` | the same script on the port and on librdpiano |
+| everything else | Dinghy's platform: updates, USB rescue, USB-MIDI/audio, panel, screen, storage, the SMK-37 |
 
-### 5. Onto the FM-1
-
-```sh
-./build.sh                                       # -> build/dinghy.fwsc (fails on what would brick the FM-1)
-python3 tools/fm1_install.py build/dinghy.fwsc   # over USB; asks before it writes, restarts into your build
-python3 tools/fm1_install.py --info              # what runs on the connected FM-1
-```
-
-That is the whole loop: change, hear it on the host, build, install. Back to another firmware, or to the official
-one, with the [FM-1 Firmware Hub](https://thefirmwarehub.com) in Chrome or Edge: Dinghy (and every copy of it)
-answers the hub's updater like every firmware there. Installing firmware is at your own risk.
-
-### 6. When it goes wrong
-
-- **It crashes:** the screen shows where (the PC), then the FM-1 restarts. Twice at boot and it goes to the
-  USB rescue by itself.
-- **It won't start at all:** hold **OCT-** while switching on: the USB rescue, no sound, only the updater. Install
-  a working build (or another firmware from the hub) from there.
-- **The build refuses:** it checks for a 64-bit division, a call into the chip ROM, too much RAM, a register touched
-  outside `hal/`. [docs/RULES.md](docs/RULES.md) says why each one matters; read it before your first crash.
-
-### 7. Make it yours, release it, get into the hub
-
-Your name and logo, your own package identity (so the FM-1 and the installers tell your firmware from Dinghy),
-a GitHub release with the `.fwsc`, and how to get listed next to the others in the
-[FM-1 Firmware Hub](https://thefirmwarehub.com): **[docs/MAKE-IT-YOURS.md](docs/MAKE-IT-YOURS.md)**.
-
-## Where to go next
-
-- **[docs/API.md](docs/API.md)**: everything `platform.c` gives you, with the panel's ids, the screen calls, the
-  audio contract, MIDI, storage, the flash map, timing, the SMK-37.
-- **[docs/SMK37.md](docs/SMK37.md)**: building and installing for the M-Vave SMK-37.
-- **[docs/MAKE-IT-YOURS.md](docs/MAKE-IT-YOURS.md)**: turn Dinghy into your firmware: the name, the package
-  identity, releases, getting into the FM-1 Firmware Hub.
-- **[docs/RULES.md](docs/RULES.md)**: the chip's rules (no FPU, no libgcc, the audio ISR's budget) and what the build
-  checks for you. Read it before your first crash, not after.
+The package identity is `FM-1_95N` (Dinghy is `99N`); check the hub's list before you release under it.
 
 ## License
 
-GPL-3.0-only, as Felucca and SLOOP: you may change and share it, and whoever gets your firmware gets its source.
-Details, credits and third-party parts in [LICENSING.md](LICENSING.md).
-
-The platform is Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments, with SLOOP's changes (isod89);
-the SMK-37 layer by M. Geisler (genkigenki); the loader's screen after Skiff (illuminus5). Dinghy (the app, the host
-mode, the docs) by zvenson.
+GPL-3.0-only. rdpiano is GPL-3.0 (Giulio Zausa and contributors), its HD6301 core is MAME's (BSD-3-Clause), the
+platform is Felucca's, SLOOP's and Dinghy's. Details in [LICENSING.md](LICENSING.md).

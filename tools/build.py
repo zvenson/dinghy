@@ -5,14 +5,14 @@
 
   tools/build.py [--release X.Y[-suffix]] [--board fm1|smk37] [--model pro|elite|mke]
 
-Outputs in build/: dinghy.bin (app), loader/ota.bin (update loader),
-dinghy.fwsc (package). See README.md for the toolchain and the SDK.
+Outputs in build/: rdpno.bin (app), loader/ota.bin (update loader),
+rdpno.fwsc (package). See README.md for the toolchain and the SDK.
 
 --board smk37 (or BOARD=smk37) builds for the M-Vave SMK-37 (docs/SMK37.md): -DBOARD_SMK37=1 for the app and the
 loader, identity SMK-37 Pro_990 (release X.Y: SMK-37 Pro_99Y), the SMK flash layout (fm1pkg_make.py, app slot
-0x97400), the package build/dinghy-smk37.fwsc. --model elite / mke (or MODEL=) with smk37: the same build under the
+0x97400), the package build/rdpno-smk37.fwsc. --model elite / mke (or MODEL=) with smk37: the same build under the
 SMK-37 Elite's or the MKE-P37's model name (identity, loader and update record; -DSMK_MODEL), so M-Vave's updater
-still takes that unit's factory package: dinghy-smk37-elite.fwsc, -mke.fwsc. The default stays the FM-1.
+still takes that unit's factory package: rdpno-smk37-elite.fwsc, -mke.fwsc. The default stays the FM-1.
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it; on
 macOS (or with JIELI_DOCKER=1) each tool runs in a linux/amd64 container.
@@ -55,13 +55,13 @@ SDK_SHA256 = {
 }
 
 BOARD = "fm1"                       # fm1 (default) or smk37: BOARD env or --board
-BOARD_PREFIX = {"fm1": "FM-1_99", "smk37": "SMK-37 Pro_99"}   # identity: prefix + minor (0: a dev build)
+BOARD_PREFIX = {"fm1": "FM-1_95", "smk37": "SMK-37 Pro_95"}   # identity: prefix + minor (0: a dev build); RDPNO: 95N
 BOARD_DEFS = {"fm1": [], "smk37": ["-DBOARD_SMK37=1"]}
 MODELS = {"pro": "SMK-37 Pro", "elite": "SMK-37 Elite", "mke": "MKE-P37"}   # smk37: one keyboard, three names
-DATA_FAMILY = "DINGHY"              # the SMK store's owner tag (store.h): 1..7 of A-Z 0-9. Your fork: your own
-SCREEN_NAME = "DINGHY"              # the update loader's screen (FM-1, ldr_screen.c): the name and its colour (RGB565)
-SCREEN_COLOUR = 0xB47F              # lilac, #B48CFF
-PRODUCT = "FM-1_990"                # Dinghy: 99N (OUR_LOADER in the installer wants FM-1_9NN). Your fork: pick your own
+DATA_FAMILY = "RDPNO"               # the SMK store's owner tag (store.h): 1..7 of A-Z 0-9. Your fork: your own
+SCREEN_NAME = "RDPNO"               # the update loader's screen (FM-1, ldr_screen.c): the name and its colour (RGB565)
+SCREEN_COLOUR = 0xFCA7              # warm orange, #FF963C
+PRODUCT = "FM-1_950"                # RDPNO: 95N (OUR_LOADER in the installer wants FM-1_9NN; Dinghy is 99N)
 VERSION = None                      # APP_VER for release builds
 
 
@@ -165,7 +165,19 @@ def build_loader():
 
 # ---- app
 
+def rom_header():
+    """firmware/gen/rdp_rom.h: the ROMs, packed (tools/pack_roms.py). Not in git: made here from RDP_ROMS
+    (rdpiano's roms/ folder; default ../rdpiano/roms) when it is missing, or always with RDP_REPACK=1."""
+    h = FW / "gen" / "rdp_rom.h"
+    if h.exists() and os.environ.get("RDP_REPACK", "0") != "1":
+        return
+    r = subprocess.run([sys.executable, str(SRC / "tools" / "pack_roms.py")], cwd=SRC)
+    if r.returncode:
+        raise SystemExit("build: no ROMs, no RdPiano: see README.md (RDP_ROMS=/path/to/rdpiano/roms ./build.sh)")
+
+
 def build_app():
+    rom_header()
     flags = [*CFLAGS, *BOARD_DEFS[BOARD], "-Ifirmware/hal", "-Ifirmware/src", "-Ifirmware/gen", f'-DFELUCCA_ID="{PRODUCT}"',
              f'-DAPP_VER="{VERSION or "0.0"}"']
     if BOARD == "smk37":
@@ -176,9 +188,10 @@ def build_app():
     cmds = [("cc", "-c", FW / "crt0.S", "-o", OUT / "crt0.o"),
             ("cc", "-c", FW / "hal" / "fm1_vec.S", "-o", OUT / "fm1_vec.o"),
             ("cc", "-c", FW / "hal" / "fm1_isr.S", "-o", OUT / "fm1_isr.o"),
-            ("cc", *flags, "-c", FW / "src" / "dinghy.c", "-o", OUT / "dinghy.o")]
+            ("cc", "-c", FW / "hal" / "fm1_cpu1.S", "-o", OUT / "fm1_cpu1.o"),
+            ("cc", *flags, "-c", FW / "src" / "rdpno.c", "-o", OUT / "rdpno.o")]
     tc_all(*cmds)
-    elf = OUT / "dinghy.elf"
+    elf = OUT / "rdpno.elf"
     ld = FW / "app.ld"
     if APP_SLOT != 0x8DFBC:          # another board's app slot (SMK-37): the same script, its XIP length
         txt = ld.read_text()
@@ -187,22 +200,24 @@ def build_app():
         ld = OUT / "app.ld"
         ld.write_text(txt.replace("LENGTH = 0x8DFBC", f"LENGTH = {APP_SLOT:#X}".replace("0X", "0x")))
     tc("pi32v2/bin/ld", "--gc-sections", "-e", "_start", "-T", ld, OUT / "crt0.o", OUT / "fm1_vec.o",
-       OUT / "fm1_isr.o", OUT / "dinghy.o", "-o", elf)
-    for sect in ("text.bin", "data.bin", "ramtext.bin"):
+       OUT / "fm1_isr.o", OUT / "fm1_cpu1.o", OUT / "rdpno.o", "-o", elf)
+    for sect in ("text.bin", "data.bin", "ramtext.bin", "c1text.bin"):
         (OUT / sect).unlink(missing_ok=True)
     *_, syms, dis, rt = tc_all(("common/bin/objcopy", "-O", "binary", "-j", ".text", elf, OUT / "text.bin"),
                                ("common/bin/objcopy", "-O", "binary", "-j", ".data", elf, OUT / "data.bin"),
                                ("common/bin/objcopy", "-O", "binary", "-j", ".ram_text", elf, OUT / "ramtext.bin"),
+                               ("common/bin/objcopy", "-O", "binary", "-j", ".c1_text", elf, OUT / "c1text.bin"),
                                ("common/bin/objdump", "-t", elf),
                                ("common/bin/objdump", "-d", elf),
                                ("common/bin/objdump", "-d", "-j", ".ram_text", elf))
-    (OUT / "dinghy.dis").write_text(dis)
+    (OUT / "rdpno.dis").write_text(dis)
 
     def symv(name):
         return int(re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M).group(1), 16)
     img = bytearray((OUT / "text.bin").read_bytes())
-    # .ram_text and .data follow .text at their load addresses; crt0 copies them by words
-    for sect, lname in (("ramtext.bin", "_rt_load"), ("data.bin", "_data_load")):
+    # .ram_text, .c1_text (the second core's loop) and .data follow .text at their load addresses; fm1_cstart
+    # copies them by words
+    for sect, lname in (("ramtext.bin", "_rt_load"), ("c1text.bin", "_c1_load"), ("data.bin", "_data_load")):
         load = symv(lname)
         if load % 4:
             raise SystemExit(f"{lname} {load:#x} is not word aligned")
@@ -213,7 +228,7 @@ def build_app():
             img += b"\xff" * (load - APP_XIP - len(img))
             img += blob
     img += b"\xff" * (-len(img) % 4)
-    (OUT / "dinghy.bin").write_bytes(img)
+    (OUT / "rdpno.bin").write_bytes(img)
     return bytes(img), syms, dis, rt
 
 
@@ -319,14 +334,14 @@ def main():
         BOARD_PREFIX[BOARD] = BOARD_PREFIX[BOARD].replace(MODELS["pro"], MODELS[model])
         suffix += "-" + model
     PRODUCT = BOARD_PREFIX[BOARD] + "0"
-    name = f"dinghy{suffix}.fwsc"
+    name = f"rdpno{suffix}.fwsc"
     if a.release:                   # one digit each: the identity has room for two (X.Y; a .Z only in the text)
         m = re.fullmatch(r"(\d)\.(\d)(\.\d)?(-[A-Za-z0-9]+)?", a.release)
         if not m:
             raise SystemExit(f"--release {a.release}: use X.Y, X.Y.Z or X.Y-suffix, one digit each")
         PRODUCT = BOARD_PREFIX[BOARD] + m[2]
         VERSION = m[1] + "." + m[2] + (m[3] or "")
-        name = f"dinghy-{a.release}{suffix}.fwsc"
+        name = f"rdpno-{a.release}{suffix}.fwsc"
     fm1pkg_make.SDK = a.sdk
     for rel, sha in SDK_SHA256.items():          # fail early without the SDK
         if hashlib.sha256(fm1pkg_make.sdk_file(rel)).hexdigest() != sha:
@@ -347,7 +362,7 @@ def main():
         raise SystemExit("build: checks failed")
     pkg = fm1pkg_make.ufw(fm1pkg_make.flash_image(img, fm1pkg_make.KEY), ota, PRODUCT)
     (OUT / name).write_bytes(pkg)
-    print(f"app      {OUT / 'dinghy.bin'}  {len(img)} B")
+    print(f"app      {OUT / 'rdpno.bin'}  {len(img)} B")
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")
     print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}" + (f", board {BOARD}" if BOARD != "fm1" else ""))
     return 0

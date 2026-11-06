@@ -52,6 +52,7 @@ enum { ENC_SELECT = 0, ENC_ALGORITHM = 1, ENC_KNOB1 = 2, ENC_KNOB2 = 3, ENC_KNOB
 #include "fm1_sys.h"
 #include "fm1_irq.h"
 #include "fm1_guard.h"
+#include "fm1_cpu1.h"                           /* the second core (from Clipper: X0X's, after Melodee's) */
 #if BOARD_SMK37
 #include "smk_input.h"                          /* keys with velocity, buttons, 8 encoders, LEDs, pads, faders, wheels */
 static void fm1_led_key_glow(uint32_t id, int on) { (void)id; (void)on; }   /* (no key LEDs: the pads glow) */
@@ -441,12 +442,58 @@ static void fm1_fault(const fm1_crash_t *c)
     fm1_reboot();
 }
 
+/* ---- the second core (Clipper's cpu1.c, cut down): started at power-on and proved with a self-test job; the
+ * app hands it work through cpu1_run / cpu1_wait. If it does not answer, or a job comes back wrong or late, the
+ * FM-1 runs on one core (some units' core 1 reads the RAM wrong: fm1_cpu1.h) */
+enum { CPU1_OFF, CPU1_NOSTART, CPU1_FAILED, CPU1_OK };
+static uint8_t cpu1_state = CPU1_OFF;
+static volatile uint32_t cpu1_test_out;
+static uint32_t cpu1_lcg(uint32_t x)
+{
+    uint32_t i;
+    for (i = 0; i < 64u; i++)
+        x = x * 1664525u + 1013904223u;
+    return x;
+}
+static void cpu1_selftest(uint32_t arg) { cpu1_test_out = cpu1_lcg(arg); }
+static void cpu1_boot(void)
+{
+    fm1_guard_pc_open();                        /* (it starts in the chip's ROM) */
+    if (fm1_cpu1_start() != 0) {
+        fm1_guard_enable(FM1_GUARD_PC);
+        cpu1_state = CPU1_NOSTART;
+        return;
+    }
+    fm1_guard_enable(FM1_GUARD_PC);
+    cpu1_test_out = 0;
+    if (!fm1_cpu1_run(cpu1_selftest, 20261106u) || fm1_cpu1_wait() != 0 || cpu1_test_out != cpu1_lcg(20261106u)) {
+        fm1_cpu1_hold();
+        cpu1_state = CPU1_FAILED;
+        return;
+    }
+    cpu1_state = CPU1_OK;
+}
+static int cpu1_on(void) { return cpu1_state == CPU1_OK && fm1_c1_on; }
+static int cpu1_run(void (*fn)(uint32_t), uint32_t arg) { return cpu1_state == CPU1_OK ? fm1_cpu1_run(fn, arg) : 0; }
+static int cpu1_wait(void)                      /* 0 = done; -1 = given up: one core from now on */
+{
+    if (fm1_cpu1_wait() == 0)
+        return 0;
+    cpu1_state = CPU1_FAILED;
+    return -1;
+}
+
 void fm1_cstart(void)
 {
     extern uint32_t _data_start[], _data_end[], _data_load[], _bss_start[], _bss_end[];
     extern uint32_t _pool_start[], _pool_end[], _rt_start[], _rt_end[], _rt_load[];
+    extern uint32_t _c1_start[], _c1_end[], _c1_load[];
     uint32_t *s, *d, p3, boot_mode;
+    fm1_cpu1_halt();                            /* a second core a reset left running would read the RAM cleared
+                                                 * below (Clipper, fm1_sys.h: registers only) */
     fm1_time_init();
+    fm1_supplies_stock();                       /* VDC14 1.60 V, SYSVDD 1.38 V, as M-VAVE's firmware: both cores read
+                                                 * the flash and the SRAM right on every unit (Clipper, fm1_sys.h) */
     fm1_reset_reason();
     p3 = fm1_boot.p3_rst;
     fm1_wdt_arm(0x0D);
@@ -460,6 +507,7 @@ void fm1_cstart(void)
     for (d = _pool_start; d < _pool_end; d++) *d = 0;
     for (s = _data_load, d = _data_start; d < _data_end; s++, d++) *d = *s;
     for (s = _rt_load, d = _rt_start; d < _rt_end; s++, d++) *d = *s;
+    for (s = _c1_load, d = _c1_start; d < _c1_end; s++, d++) *d = *s;   /* the second core's loop */
     fm1_mailbox_clear();
     fm1_guard_enable(FM1_GUARD_STACK | FM1_GUARD_WRITE | FM1_GUARD_BUS | FM1_GUARD_PC);
     fm1_boot.p3_rst = (uint8_t)p3;
@@ -480,6 +528,7 @@ void fm1_cstart(void)
     smk_trim_read();                            /* (after fm1_input_init: it sets the defaults first) */
     smk_owner_check();
 #endif
+    cpu1_boot();                                /* the second core: before the audio and the timers (Clipper) */
     fm1_audio_init(abuf, HALF_WORDS, isr_alnk0, 3);   /* (abuf is zero: .bss) */
     usb_start();
 #if FELUCCA_UART
