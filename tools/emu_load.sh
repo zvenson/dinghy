@@ -19,7 +19,7 @@ addr() { awk -v s="$1" '$NF == s { print $1 }' build/rdpno.syms; }
 A="$(addr rdp_load_max) $(addr rdp_parts_max) $(addr rdp_load_sum) $(addr rdp_load_n)"
 MS="${EMU_MS:-4500}"   # (the keys from 1.9 s on: the load counts from 1.5 s, after the boot)
 CHORD8="1900:PLAY,2000:m903c64,2020:m904064,2040:m904364,2060:m904864,2080:m904c64,2100:m905064,2120:m905364,2140:m905864"
-CHORD16="$CHORD8,700:m902b64,720:m902f64,740:m903264,760:m903764,780:m903b64,800:m903e64,820:m904564,840:m904a64"
+CHORD16="$CHORD8,2200:m902b64,2220:m902f64,2240:m903264,2260:m903764,2280:m903b64,2300:m903e64,2320:m904564,2340:m904a64"
 scene() {   # name, FM1_BENCH_KEYS
     FM1_STRICT=1 FM1_DUMPRAM=build/emu_ram.bin FM1_BENCH_KEYS="$2" "$LIVE" --fwsc build/rdpno.fwsc \
         --mhz 240 --bench "$MS" > build/emu_"$1".log 2>&1 || { echo "emu_load: $1 failed"; tail -5 build/emu_"$1".log; return 1; }

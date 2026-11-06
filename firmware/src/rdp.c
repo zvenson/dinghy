@@ -3047,6 +3047,7 @@ static RDP_FAST u8 mcu_read(u32 addr)
 {
     addr &= 0xFFFFu;
     if (addr >= 0xC000u) return rdp_prog[(addr - 0xC000u) & 0x1FFFu];
+    if (addr - 0x20u < 0x1000u - 0x20u) return rdp_ram[addr];   /* (the RAM: the next most read) */
     if (addr >= 0x4000u) {                      /* the parameter ROM, 4 banks of 32 KB by the latch */
         u32 i = (addr - 0x4000u) | ((u32)latch_val & 3u) << 15;
         if (i - 0x8000u < 0x8000u) return rdp_params[i - 0x8000u];
@@ -3149,6 +3150,17 @@ static RDP_FAST void mcu_fast(void)                      /* the rest of the samp
 {
     u32 x = X, cc = CC;
     while (m_icount > 0) {                      /* (one instruction a turn, as the interpreter: same stops) */
+        if (!mcu_quiet()) {
+            /* Something waits (a command, the SA chip's end): as mcu_run_one, the lines first. While the CPU masks
+             * interrupts (CC I: in its handlers, where it takes the notes) none can be taken, and the
+             * interpreter's check would do nothing: go on here. Else back to the interpreter. */
+            if (!(cc & 0x10u)) break;
+            CC = (u8)cc; X = (u16)x;
+            if (!rdp_q_empty()) mcu_set_input(M6801_TIN_LINE, ASSERT_LINE);
+            if (sa_irq) mcu_set_input(M6800_IRQ_LINE, ASSERT_LINE);
+            if (m_nmi_pending) break;
+            goto other;                         /* (the scan below runs only with nothing waiting) */
+        }
         switch (PC) {
         case 0xE379:                                                                         /* SEI */
             while (m_icount >= 26 && x + 0x70u < 0x1000u) {     /* whole passes at once, while they fit */
@@ -3218,16 +3230,16 @@ static RDP_FAST void mcu_fast(void)                      /* the rest of the samp
         default: break;
         }
         if (0) { next: continue; }
-        {   /* any other instruction: the interpreter's, without its interrupt checks (nothing is pending) */
+        X = (u16)x; CC = (u8)cc;
+    other:
+        {   /* any other instruction: the interpreter's, without its interrupt checks (none could be taken) */
             u8 ireg;
-            X = (u16)x; CC = (u8)cc;
             pPPC = pPC;
             ireg = PC >= 0xC000u ? rdp_prog[(PC - 0xC000u) & 0x1FFFu] : mcu_read(PCD);
             PC++;
             hd63701_insn[ireg]();
             increment_counter(cycles_63701[ireg]);
             x = X; cc = CC;
-            if (!mcu_quiet()) break;            /* (a port or TCSR write may have raised one: back to the checks) */
         }
     }
 out:
@@ -3243,7 +3255,7 @@ static RDP_FAST s32 rdp_render(void)                     /* one sample; the audi
         m_icount += n;                          /* what the last instruction overran is owed */
         if (m_icount > n) m_icount = n;
         while (m_icount > 0) {
-            if (rdp_fast && mcu_quiet()) {
+            if (rdp_fast && (mcu_quiet() || (CC & 0x10u))) {
                 mcu_fast();
                 if (m_icount <= 0) break;
             }
