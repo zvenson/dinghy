@@ -68,10 +68,16 @@ typedef struct {
     u8 en, inv, ci, pitch_hi;
 } sa_part_t;
 static sa_part_t sa[SA_NV][16];
-static u16 sa_live[SA_NV];                      /* bit p: part p sounds (not: env_value == 0 and env_dest == 0) */
-static u16 sa_zero[SA_NV];                      /* bit p: fell silent last sample: its sub phase goes to 0 */
-static u32 sa_vmask;                            /* bit v: voice v has a part in sa_live or sa_zero */
-static RDP_FAST void sa_vmark(u32 vi) { if (sa_live[vi] | sa_zero[vi]) sa_vmask |= 1u << vi; else sa_vmask &= ~(1u << vi); }
+/* (words, not halfwords, and the voice mask in two: the even voices are core 0's, the odd ones core 1's, and
+ * neither writes a word the other does) */
+static u32 sa_live[SA_NV];                      /* bit p: part p sounds (not: env_value == 0 and env_dest == 0) */
+static u32 sa_zero[SA_NV];                      /* bit p: fell silent last sample: its sub phase goes to 0 */
+static u32 sa_vm[2];                            /* bit v: voice v has a part in sa_live or sa_zero; [v & 1] */
+static RDP_FAST void sa_vmark(u32 vi)
+{
+    if (sa_live[vi] | sa_zero[vi]) sa_vm[vi & 1u] |= 1u << vi;
+    else sa_vm[vi & 1u] &= ~(1u << vi);
+}
 static u8 sa_irq_id, sa_irq;
 static volatile u32 rdp_active;                 /* parts that sounded in the last sample (the screen shows it) */
 
@@ -134,8 +140,8 @@ static RDP_FAST void sa_write(u32 offset, u8 data)
         p->dest20 = (u32)data << 20;
         p->dest_c = (~(u32)data & 0xFFu) + 1u;
         if (pi < SA_NP) {
-            if (p->env_value || data) sa_live[vi] |= (u16)(1u << pi);
-            else sa_live[vi] &= (u16)~(1u << pi);
+            if (p->env_value || data) sa_live[vi] |= 1u << pi;
+            else sa_live[vi] &= ~(1u << pi);
             sa_vmark(vi);
         }
         break;
@@ -185,11 +191,14 @@ static const u8 SA_LOW[1024] = {                /* the lowest set bit of a 10-bi
     6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
     5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
 };
-static RDP_FAST s32 sa_update(void)             /* one sample of all voices (SoundChip::update) */
+typedef struct { s32 result; u32 active, irq, irq_id; u32 pad[12]; } sa_out_t;   /* (a cache line each) */
+static sa_out_t sa_out[2] __attribute__((aligned(64)));
+
+static RDP_FAST void sa_half(u32 c)             /* one sample of the even (c = 0) or the odd voices (c = 1) */
 {
     s32 result = 0;
-    u32 vi, active = 0, vm;
-    for (vi = 0, vm = sa_vmask; vm; vi++, vm >>= 1) {   /* the voices with something to do */
+    u32 vi, active = 0, vm, prior = sa_irq, irq = 0, irq_id = 0;
+    for (vi = c, vm = sa_vm[c] >> c; vm; vi += 2u, vm >>= 2) {   /* the voices with something to do */
         u32 live, m0, m1, gone = 0, todo;
         if (!(vm & 1u)) continue;
         live = sa_live[vi];
@@ -214,9 +223,9 @@ static RDP_FAST s32 sa_update(void)             /* one sample of all voices (Sou
             volume = ~volume & 0x3FFFu;
             a = a1a + p->env_add + p->ci;                           /* < 2^29: bit 28 is the carry */
             end = p->en & ((((a >> 28) & 1u) ^ p->inv) | (p->inv ^ ((((a & 0xFFFFFFFu) >> 20) + p->dest_c) >> 8)));
-            if (end && !sa_irq) {
-                sa_irq_id = (u8)(pi | vi << 4);
-                sa_irq = 1;
+            if (end && !prior && !irq) {        /* the first part to end (sa_update: of both halves) */
+                irq_id = pi | vi << 4;
+                irq = 1;
             }
             env = (p->dest20 & (0u - end)) | (a & 0xFFFFFFFu & (end - 1u));
             p->env_value = env;
@@ -250,13 +259,43 @@ static RDP_FAST s32 sa_update(void)             /* one sample of all voices (Sou
             gone |= (u32)(env == 0 && p->env_dest == 0) << pi;     /* silent from the next sample on */
         }
         if (gone) {
-            sa_live[vi] = (u16)(live & ~gone);
-            sa_zero[vi] = (u16)gone;
+            sa_live[vi] = live & ~gone;
+            sa_zero[vi] = gone;
             sa_vmark(vi);
         }
     }
-    rdp_active = active;
-    return result;
+    sa_out[c].result = result;
+    sa_out[c].active = active;
+    sa_out[c].irq = irq;
+    sa_out[c].irq_id = irq_id;
+}
+
+static RDP_FAST void sa_job(uint32_t c) { sa_half(c); }   /* (core 1's job) */
+
+/* the split: RDP_SPLIT_RUN(fn, arg) hands fn(arg) to the second core (1 = taken), RDP_SPLIT_WAIT() waits for it
+ * (0 = done). The app defines them (rdpno.c: platform.c's cpu1_run, cpu1_wait); without, one core does both */
+#ifndef RDP_SPLIT_RUN
+#define RDP_SPLIT_RUN(fn, arg) 0
+#define RDP_SPLIT_WAIT() 0
+#endif
+static volatile u32 rdp_split_on = 1;           /* (the app may switch it off) */
+static volatile u32 rdp_split_used;             /* the last sample had core 1's help */
+
+static RDP_FAST s32 sa_update(void)             /* one sample of all voices (SoundChip::update) */
+{
+    u32 split = rdp_split_on && sa_vm[1] && RDP_SPLIT_RUN(sa_job, 1u);
+    sa_half(0);
+    if (!split) sa_half(1);
+    else if (RDP_SPLIT_WAIT() != 0) sa_out[1].result = 0, sa_out[1].active = 0, sa_out[1].irq = 0;   /* (given up) */
+    rdp_split_used = split;
+    if (!sa_irq && (sa_out[0].irq | sa_out[1].irq)) {   /* the first part in (voice, part) order, as one loop has it */
+        u32 id = sa_out[0].irq ? sa_out[0].irq_id : sa_out[1].irq_id;
+        if (sa_out[0].irq && sa_out[1].irq && sa_out[1].irq_id < id) id = sa_out[1].irq_id;
+        sa_irq_id = (u8)id;
+        sa_irq = 1;
+    }
+    rdp_active = sa_out[0].active + sa_out[1].active;
+    return sa_out[0].result + sa_out[1].result;
 }
 
 /* ---- the parameter ROM: the current patch's 32 KB window (unpacked into the pool), and its 3-byte header */

@@ -6,12 +6,18 @@ from pathlib import Path
 import math
 FS=44100.0
 Q24=1<<24
-LEVELS=[-12+1.5*i for i in range(17)]          # dB, index 8 = 0
-MIDF=[200,280,400,560,800,1000,1400,2000,2800,4000,5600,8000]
+LEVELS=[-10.5+1.5*i for i in range(15)]        # dB, index 7 = 0: the MKS-20's -10.5..+10.5 in 1.5 dB steps
+# The MKS-20's bass is a 100 Hz shelf, its treble a 10 kHz one. As gentle shelves (Q 0.5) centred at 200 Hz and
+# 4 kHz they reach (nearly) their full level at 100 Hz and 10 kHz: a shelf centred at 10 kHz did next to nothing
+# here, where the board's sound ends at 10 kHz (it samples at 20 kHz); one at 100 Hz little to a piano.
+BASS_HZ=200
+TREBLE_HZ=4000
+SHELF_Q=0.5
+MIDF=[400,560,770,1000,1400,2000,2800,4000]       # the MKS-20's eight
 WIDTH_Q=[0.35,0.5,0.7,1.0,1.4,2.0,2.8,4.0]      # width 1..8: higher = narrower
 def q(x): return int(round(x*Q24))
 def shelf(fc,db,high):
-    A=10**(db/40); k=math.sqrt(2)
+    A=10**(db/40); k=1/SHELF_Q
     g=math.tan(math.pi*fc/FS)*(math.sqrt(A) if high else 1/math.sqrt(A))
     a1=1/(1+g*(g+k)); a2=g*a1; a3=g*a2
     if high: m0,m1,m2=A*A,k*(1-A)*A,1-A*A
@@ -25,11 +31,12 @@ out=["/* SPDX-License-Identifier: GPL-3.0-only */",
 "/* The equalizer's and the effects' constants, computed on a computer (the FM-1 has no float): see the comments.",
 " * Made by tools/gen_fx_tables.py. */",
 "#pragma once","#include <stdint.h>","",
-"#define FX_NLEVEL 17u                 /* -12..+12 dB in 1.5 dB steps; 8 = 0 dB */",
-"#define FX_NMIDF 12u","#define FX_NWIDTH 8u",
-"/* shelves (Simper's SVF, Q 0.707), Q24: a1 a2 a3 m0 m1 m2 per level; bass 100 Hz, treble 10 kHz, at 44.1 kHz */",
-arr("FX_BASS","int32_t",[c for d in LEVELS for c in shelf(100,d,False)]),
-arr("FX_TREBLE","int32_t",[c for d in LEVELS for c in shelf(10000,d,True)]),
+"#define FX_NLEVEL 15u                 /* -10.5..+10.5 dB in 1.5 dB steps; 7 = 0 dB (the MKS-20) */",
+"#define FX_LEVEL0 7u",
+"#define FX_NMIDF 8u","#define FX_NWIDTH 8u",
+f"/* shelves (Simper's SVF, Q {SHELF_Q}), Q24: a1 a2 a3 m0 m1 m2 per level; centred at {BASS_HZ} and {TREBLE_HZ} Hz (full at 100 Hz, 10 kHz), at 44.1 kHz */",
+arr("FX_BASS","int32_t",[c for d in LEVELS for c in shelf(BASS_HZ,d,False)]),
+arr("FX_TREBLE","int32_t",[c for d in LEVELS for c in shelf(TREBLE_HZ,d,True)]),
 "/* the middle band (a bell): g = tan(pi f / fs) per frequency, Q24 */",
 arr("FX_MID_G","int32_t",[q(math.tan(math.pi*f/FS)) for f in MIDF]),
 arr("FX_MID_HZ","uint16_t",MIDF),

@@ -14,6 +14,8 @@
  *   PLAY       the sustain pedal, latched (lit while it is down); CC 64 from MIDI works too
  *   MASTER     the volume (platform.c)
  *   MIDI in    notes, CC 64, program change (the voice), on USB and the TRS jack; the keys go out on USB too
+ *   2 CORES    the odd voices of the board's sound chip run on the second core (platform.c, from Clipper); a unit
+ *              whose second core fails its test, or a job, runs on one (the screen says 1 CORE)
  * Everything but the pedal is kept in flash (2 s after the last change, once silent).
  *
  * The board runs at 20 kHz (some voices 32 kHz) inside the audio interrupt; a linear interpolation takes it to
@@ -24,6 +26,8 @@ static void app_idle(void);
 #define APP_NAME "RDPNO"
 #endif
 #include "platform.c"
+#define RDP_SPLIT_RUN(fn, arg) cpu1_run((fn), (arg))   /* the odd voices on the second core (platform.c) */
+#define RDP_SPLIT_WAIT() cpu1_wait()
 #include "rdp.c"
 #include "fx.c"
 
@@ -75,7 +79,7 @@ static struct {
 static void set_defaults(void)
 {
     set.patch = 0; set.ch = 0; set.vel = 100; set.oct = 0; set.page = 0;
-    set.fx.vol = 15; set.fx.bass = 8; set.fx.treble = 8; set.fx.mid_level = 8; set.fx.mid_freq = 5;
+    set.fx.vol = 15; set.fx.bass = FX_LEVEL0; set.fx.treble = FX_LEVEL0; set.fx.mid_level = FX_LEVEL0; set.fx.mid_freq = 3;
     set.fx.width = 3; set.fx.cho_rate = 8; set.fx.cho_depth = 0; set.fx.trm_rate = 8; set.fx.trm_depth = 0;
 }
 static int set_ok(void)
@@ -121,7 +125,8 @@ static uint8_t *val_ptr(uint32_t v)
 static void val_turn(uint32_t v, int32_t e)     /* a knob turned e detents */
 {
     static const uint8_t LO[V_NONE] = {0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0};
-    static const uint8_t HI[V_NONE] = {15, 16, 16, 127, 15, 15, 15, 15, FX_NMIDF - 1u, 16, FX_NWIDTH - 1u};
+    static const uint8_t HI[V_NONE] = {15, FX_NLEVEL - 1u, FX_NLEVEL - 1u, 127, 15, 15, 15, 15, FX_NMIDF - 1u, FX_NLEVEL - 1u,
+                                       FX_NWIDTH - 1u};
     uint8_t *p = val_ptr(v);
     int32_t x = (int32_t)*p + (v == V_VEL ? 4 * e : e);
     *p = (uint8_t)(x < LO[v] ? LO[v] : x > HI[v] ? HI[v] : x);
@@ -136,9 +141,9 @@ static char *put_u(char *p, uint32_t v)
     while (n) *p++ = t[--n];
     return p;
 }
-static char *put_db(char *p, uint32_t lvl)      /* 0..16 -> "-12.0" .. "+12.0" in 1.5 dB steps */
+static char *put_db(char *p, uint32_t lvl)      /* 0..14 -> "-10.5" .. "+10.5" in 1.5 dB steps */
 {
-    int32_t t = ((int32_t)lvl - 8) * 15;        /* tenths of a dB */
+    int32_t t = ((int32_t)lvl - (int32_t)FX_LEVEL0) * 15;   /* tenths of a dB */
     uint32_t a = (uint32_t)(t < 0 ? -t : t);
     *p++ = t < 0 ? '-' : t > 0 ? '+' : ' ';
     p = put_u(p, a / 10u);
@@ -197,6 +202,7 @@ static void draw_midi(int32_t oct, uint32_t ch, uint32_t sus)
     p = put(p, "MIDI RX-CH "); if (ch) p = put_u(p, ch); else p = put(p, "OMNI");
     p = put(p, "  OCT "); *p++ = oct < 0 ? '-' : '+'; *p++ = (char)('0' + (oct < 0 ? -oct : oct));
     if (sus) p = put(p, "  SUS");
+    p = put(p, cpu1_on() ? "  2 CORES" : "  1 CORE");
     *p = 0;
     draw_text_box(0, 186, 240, &FONT_S, s, C_OFF, 1);
 }
@@ -348,7 +354,7 @@ static void app_main(void)
             st = v == V_NONE ? 0xFFFFu : (uint32_t)*val_ptr(v) | v << 8 | (uint32_t)(v == hot) << 12;
             if (st != rows_drawn[k]) { rows_drawn[k] = st; draw_row(k, v, v == hot); }
         }
-        if ((st = (uint32_t)(oct + 2) | set.ch << 4 | sustain << 9) != midi_drawn) {
+        if ((st = (uint32_t)(oct + 2) | set.ch << 4 | sustain << 9 | (uint32_t)cpu1_on() << 10) != midi_drawn) {
             midi_drawn = st;
             draw_midi(oct, set.ch, sustain);
         }

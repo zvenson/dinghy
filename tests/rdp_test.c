@@ -5,6 +5,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #define RDP_POOL
+#ifdef RDP_TEST_SPLIT                           /* the second core's half, run right away (its results stay apart) */
+#define RDP_SPLIT_RUN(fn, arg) ((fn)(arg), 1)
+#define RDP_SPLIT_WAIT() 0
+#endif
 #include "rdp.c"
 #include "rdp_script.h"
 

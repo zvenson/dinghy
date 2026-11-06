@@ -142,6 +142,10 @@ static int midi_get(uint8_t *st, uint8_t *d1, uint8_t *d2)
 static void midi_send(uint32_t st, uint32_t d1, uint32_t d2) { printf("%6u ms  MIDI out %02X %u %u\n", fm1_ms, st, d1, d2); }
 
 static void app_audio(int32_t *out, uint32_t n);
+/* the second core (platform.c on an FM-1): here its job runs right away, on this one */
+static int cpu1_on(void) { return 1; }
+static int cpu1_run(void (*fn)(uint32_t), uint32_t arg) { fn(arg); return 1; }
+static int cpu1_wait(void) { return 0; }
 static void app_main(void);
 
 /* the script: at t ms, keys down (bit k = key k, 0 = F3), a button edge, a MIDI message. A script file (the second
