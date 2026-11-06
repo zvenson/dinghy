@@ -42,4 +42,4 @@ scene repeat3 "$REPEAT3"
 scene chord16 "$CHORD16"
 FM1_STRICT=1 FM1_BENCH_KEYS="$REPEAT3" FM1_TPROF=build/emu_prof.txt,1380,1480 "$LIVE" --fwsc build/rdpno.fwsc --mhz 240 \
     --shot 2100 > build/emu_prof.log 2>&1 || true
-[ -f build/emu_prof.txt ] && python3 tools/emu_prof.py build/emu_prof.txt build/rdpno.syms build/rdpno.dis || true
+[ -f build/emu_prof.txt ] && python3 tools/emu_prof.py build/emu_prof.txt build/rdpno.syms build/rdpno.dis sa_half || true
