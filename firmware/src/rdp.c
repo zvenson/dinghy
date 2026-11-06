@@ -73,6 +73,7 @@ static sa_part_t sa[SA_NV][16];
 static u32 sa_live[SA_NV];                      /* bit p: part p sounds (not: env_value == 0 and env_dest == 0) */
 static u32 sa_zero[SA_NV];                      /* bit p: fell silent last sample: its sub phase goes to 0 */
 static u32 sa_vm[2];                            /* bit v: voice v has a part in sa_live or sa_zero; [v & 1] */
+static u32 rdp_quiet = 10;                      /* see IC8 in sa_half: 16 = no part is left out */
 static RDP_FAST void sa_vmark(u32 vi)
 {
     if (sa_live[vi] | sa_zero[vi]) sa_vm[vi & 1u] |= 1u << vi;
@@ -236,7 +237,15 @@ static RDP_FAST void sa_half(u32 c)             /* one sample of the even (c = 0
             sp = ((a & 0xFFFFu) | ph << 16) & m1;
             p->sub_phase = sp;
             wa = p->high11 | ((sp >> 9) & 0x7FFu);
-            /* IC8: the wave ROM, the level, the two exponentials */
+            /* IC8: the wave ROM, the level, the two exponentials. A part this far down (rdp_quiet: an attenuation
+             * of 10 or more of the exponential's 16 octaves) gives at most +-8 of the +-2^17 the board's sum swings:
+             * below the last bit the FM-1 plays (rdpno.c: >> 3). It is not read; its envelope and phase go on as
+             * ever, so the board sees no difference. rdp_quiet = 16: every part, as librdpiano (the tests) */
+            volume |= (0xFu << 10) & (0u - (p->pitch_hi | (((sp >> 20) & 15u) != 0) | (~m1 & 1u)));
+            if ((volume >> 10) >= rdp_quiet) {
+                gone |= (u32)(env == 0 && p->env_dest == 0) << pi;
+                continue;
+            }
             {
                 const u8 *w = &RDP_WAVE[3u * (wa & 0x1FFFFu)];    /* (the board's program keeps it below) */
                 w0 = w[0]; w1 = w[1];
@@ -244,7 +253,6 @@ static RDP_FAST void sa_half(u32 c)             /* one sample of the even (c = 0
                 pa = (w0 | (w1 & 0x3Fu) << 8) | sel;
                 pb = ((u32)w[2] << 1 | (w0 & 1u)) | (sel ^ 1u);
             }
-            volume |= (0xFu << 10) & (0u - (p->pitch_hi | (((sp >> 20) & 15u) != 0) | (~m1 & 1u)));
             a = volume + pa;                                        /* bit 14: the carry */
             t1 = (a & 0x3FFFu) | (0x3C00u & (0u - (a >> 14)));
             a = SA_ADDR[(sp >> 5) & 15u] + (pb & 0x1FFu);           /* bit 9: the carry */
@@ -297,6 +305,12 @@ static RDP_FAST s32 sa_update(void)             /* one sample of all voices (Sou
     rdp_active = sa_out[0].active + sa_out[1].active;
     return sa_out[0].result + sa_out[1].result;
 }
+
+/* How many voices the board plays (RDPNO): its program keeps the number in its RAM at $92/$93 (16; E1E8 sets
+ * it, 10 in another of its modes) and every loop over the voices stops there, its voice stealing too. Fewer
+ * voices: the board steals among fewer, by its own rule. rdp_render holds the number at rdp_voices, from the
+ * next sample on (a voice above it that still sounds decays as it would, and the board no longer looks at it). */
+static volatile u32 rdp_voices = 16;
 
 /* ---- the parameter ROM: the current patch's 32 KB window (unpacked into the pool), and its 3-byte header */
 static u8 rdp_win[2][0x8000] RDP_POOL;
@@ -3194,6 +3208,7 @@ out:
 static RDP_FAST s32 rdp_render(void)                     /* one sample; the audio interrupt */
 {
     s32 s = sa_update();
+    if (rdp_ram[0x93] > rdp_voices && !rdp_ram[0x92]) rdp_ram[0x93] = (u8)rdp_voices;   /* (see rdp_voices) */
     int n = rdp_khz32 ? 62 : 100;
     if (rdp_exact) {
         m_icount += n;                          /* what the last instruction overran is owed */

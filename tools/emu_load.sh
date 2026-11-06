@@ -37,7 +37,8 @@ scene idle ""
 scene one_key "500:C4,2900:C4^"
 scene chord4 "400:PLAY,500:C4,520:E4,540:G4,560:C5"
 scene chord8 "$CHORD8"
+scene repeat3 "400:PLAY,500:C4,520:E4,540:G4,700:C4^,720:E4^,740:G4^,800:C4,820:E4,840:G4,1000:C4^,1020:E4^,1040:G4^,1100:C4,1120:E4,1140:G4,1300:C4^,1320:E4^,1340:G4^,1400:C4,1420:E4,1440:G4,1600:C4^,1620:E4^,1640:G4^,1700:C4,1720:E4,1740:G4,1900:C4^,1920:E4^,1940:G4^,2000:C4,2020:E4,2040:G4"
 scene chord16 "$CHORD16"
-FM1_STRICT=1 FM1_BENCH_KEYS="$CHORD8" FM1_TPROF=build/emu_prof.txt,1500,2000 "$LIVE" --fwsc build/rdpno.fwsc --mhz 240 \
+FM1_STRICT=1 FM1_BENCH_KEYS="$CHORD16" FM1_TPROF=build/emu_prof.txt,1500,2000 "$LIVE" --fwsc build/rdpno.fwsc --mhz 240 \
     --shot 2100 > build/emu_prof.log 2>&1 || true
 [ -f build/emu_prof.txt ] && python3 tools/emu_prof.py build/emu_prof.txt build/rdpno.syms build/rdpno.dis || true

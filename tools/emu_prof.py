@@ -18,6 +18,7 @@ for ln in open(dis, errors="replace"):
     if m:
         text[int(m.group(1), 16)] = m.group(2).strip()
 by_f, by_pc, total, miss = {}, {}, 0, {}
+by_f1, total1 = {}, 0
 for ln in open(prof):
     p = ln.split()
     if p[0] == "0":
@@ -27,13 +28,23 @@ for ln in open(prof):
         i = bisect.bisect_right(starts, pc) - 1
         name = funcs[i][2] if i >= 0 and pc < funcs[i][0] + funcs[i][1] else "?"
         by_f[name] = by_f.get(name, 0) + n
+    elif p[0] == "1":
+        pc, n = int(p[1], 16), int(p[2])
+        total1 += n
+        i = bisect.bisect_right(starts, pc) - 1
+        name = funcs[i][2] if i >= 0 and pc < funcs[i][0] + funcs[i][1] else "?"
+        by_f1[name] = by_f1.get(name, 0) + n
     elif p[0].startswith("m"):
         miss[int(p[1], 16)] = miss.get(int(p[1], 16), 0) + int(p[2])
 out = ["core 0, by function:"]
 for name, n in sorted(by_f.items(), key=lambda x: -x[1])[:14]:
     out.append(f"  {100 * n / total:5.1f} %  {name}")
+if total1:
+    out.append("core 1, by function:")
+    for name, n in sorted(by_f1.items(), key=lambda x: -x[1])[:6]:
+        out.append(f"  {100 * n / total1:5.1f} %  {name}")
 out.append("hottest instructions:")
-for pc, n in sorted(by_pc.items(), key=lambda x: -x[1])[:40]:
+for pc, n in sorted(by_pc.items(), key=lambda x: -x[1])[:20]:
     out.append(f"  {100 * n / total:5.1f} %  {pc:08x}  {text.get(pc, '')}")
 out.append(f"flash cache misses: {sum(miss.values())} on {len(miss)} lines; most:")
 for a, n in sorted(miss.items(), key=lambda x: -x[1])[:8]:

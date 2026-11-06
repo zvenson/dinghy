@@ -9,7 +9,8 @@
  *   SELECT     the page: HOME -> FX -> ENV; or HOME, FX, ENV themselves
  *   HOME       KNOB 1 voice level, 2 treble level, 3 bass level, 4 the keys' velocity (the FM-1 feels none)
  *   FX         KNOB 1 tremolo rate, 2 tremolo depth, 3 chorus rate, 4 chorus depth (depth 0 = off)
- *   ENV        KNOB 1 middle frequency, 2 middle level, 3 band width (the middle equalizer)
+ *   ENV        KNOB 1 middle frequency, 2 middle level, 3 band width (the middle equalizer), 4 voices: how many
+ *              the board plays (4..16; its own voice stealing among them; fewer = less load: rdp.c rdp_voices)
  *   OCT- OCT+  the octave of the keys
  *   PLAY       the sustain pedal, latched (lit while it is down); CC 64 from MIDI works too
  *   MASTER     the volume (platform.c)
@@ -73,12 +74,12 @@ static RDP_FAST void app_audio(int32_t *out, uint32_t n)
 
 /* ---- what is kept: the voice, MIDI, the keys, and the MKS-20's edit parameters */
 static struct {
-    uint8_t patch, ch, vel, oct, page;
+    uint8_t patch, ch, vel, oct, page, voices;
     fx_par_t fx;
 } set;
 static void set_defaults(void)
 {
-    set.patch = 0; set.ch = 0; set.vel = 100; set.oct = 0; set.page = 0;
+    set.patch = 0; set.ch = 0; set.vel = 100; set.oct = 0; set.page = 0; set.voices = 8;
     set.fx.vol = 15; set.fx.bass = FX_LEVEL0; set.fx.treble = FX_LEVEL0; set.fx.mid_level = FX_LEVEL0; set.fx.mid_freq = 3;
     set.fx.width = 3; set.fx.cho_rate = 8; set.fx.cho_depth = 0; set.fx.trm_rate = 8; set.fx.trm_depth = 0;
 }
@@ -86,7 +87,7 @@ static int set_ok(void)
 {
     const fx_par_t *f = &set.fx;
     return set.patch < RDP_NPATCH && set.ch <= 16u && set.vel && set.vel <= 127u && (int8_t)set.oct >= -2 &&
-           (int8_t)set.oct <= 2 && set.page < 3u && f->vol <= 15u && f->bass < FX_NLEVEL && f->treble < FX_NLEVEL &&
+           (int8_t)set.oct <= 2 && set.page < 3u && set.voices >= 4u && set.voices <= 16u && f->vol <= 15u && f->bass < FX_NLEVEL && f->treble < FX_NLEVEL &&
            f->mid_level < FX_NLEVEL && f->mid_freq < FX_NMIDF && f->width < FX_NWIDTH && f->cho_rate &&
            f->cho_rate <= 15u && f->cho_depth <= 15u && f->trm_rate && f->trm_rate <= 15u && f->trm_depth <= 15u;
 }
@@ -99,12 +100,14 @@ static void pedal(uint32_t on) { sustain = on; rdp_midi(0xB0, 64, on ? 127u : 0u
 
 /* ---- the pages: four knob rows each */
 enum { PG_HOME, PG_FX, PG_ENV, PG_N };
-enum { V_VOL, V_TREBLE, V_BASS, V_VEL, V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH, V_MFREQ, V_MLEVEL, V_WIDTH, V_NONE };
+enum { V_VOL, V_TREBLE, V_BASS, V_VEL, V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH, V_MFREQ, V_MLEVEL, V_WIDTH, V_VOICES,
+       V_NONE };
 static const char *const PAGE_NAME[PG_N] = {"HOME", "FX: TREMOLO / CHORUS", "ENV: MIDDLE EQ"};
 static const uint8_t PAGE_ROW[PG_N][4] = {
-    {V_VOL, V_TREBLE, V_BASS, V_VEL}, {V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH}, {V_MFREQ, V_MLEVEL, V_WIDTH, V_NONE}};
+    {V_VOL, V_TREBLE, V_BASS, V_VEL}, {V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH}, {V_MFREQ, V_MLEVEL, V_WIDTH, V_VOICES}};
 static const char *const VAL_NAME[V_NONE] = {"VOICE LEVEL", "TREBLE LEVEL", "BASS LEVEL", "KEY VELOCITY",
-    "TREMOLO RATE", "TREMOLO DEPTH", "CHORUS RATE", "CHORUS DEPTH", "MIDDLE FREQ", "MIDDLE LEVEL", "BAND WIDTH"};
+    "TREMOLO RATE", "TREMOLO DEPTH", "CHORUS RATE", "CHORUS DEPTH", "MIDDLE FREQ", "MIDDLE LEVEL", "BAND WIDTH",
+    "VOICES"};
 
 static uint8_t *val_ptr(uint32_t v)
 {
@@ -119,14 +122,15 @@ static uint8_t *val_ptr(uint32_t v)
     case V_CDEPTH: return &set.fx.cho_depth;
     case V_MFREQ: return &set.fx.mid_freq;
     case V_MLEVEL: return &set.fx.mid_level;
+    case V_VOICES: return &set.voices;
     default: return &set.fx.width;
     }
 }
 static void val_turn(uint32_t v, int32_t e)     /* a knob turned e detents */
 {
-    static const uint8_t LO[V_NONE] = {0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0};
+    static const uint8_t LO[V_NONE] = {0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 4};
     static const uint8_t HI[V_NONE] = {15, FX_NLEVEL - 1u, FX_NLEVEL - 1u, 127, 15, 15, 15, 15, FX_NMIDF - 1u, FX_NLEVEL - 1u,
-                                       FX_NWIDTH - 1u};
+                                       FX_NWIDTH - 1u, 16};
     uint8_t *p = val_ptr(v);
     int32_t x = (int32_t)*p + (v == V_VEL ? 4 * e : e);
     *p = (uint8_t)(x < LO[v] ? LO[v] : x > HI[v] ? HI[v] : x);
@@ -254,6 +258,7 @@ static void app_main(void)
     for (k = 0; k < 4u; k++) rows_drawn[k] = ~0u;
     if (settings_load(&set, sizeof set) || !set_ok()) set_defaults();
     fx_set(&set.fx);
+    rdp_voices = set.voices;
 
     lcd_fill(0, 0, 240, 240, C_BLACK);
     draw_text_box(0, 100, 240, &FONT_S, APP_NAME "  v" APP_VER, C_ACC, 1);
@@ -318,7 +323,8 @@ static void app_main(void)
             if ((e = fm1_enc_take(KNOB[k])) != 0 && PAGE_ROW[set.page][k] != V_NONE) {
                 hot = PAGE_ROW[set.page][k];
                 val_turn(hot, e);
-                if (hot != V_VEL) fx_dirty = 1;
+                if (hot == V_VOICES) rdp_voices = set.voices;
+                else if (hot != V_VEL) fx_dirty = 1;
                 dirty = 1; t_change = fm1_ms;
             }
         if (fx_dirty) fx_set(&set.fx);
