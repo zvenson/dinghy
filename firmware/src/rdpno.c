@@ -36,6 +36,7 @@ static void app_idle(void);
 static volatile uint32_t rdp_ready;            /* rdp_init is done: render */
 static volatile uint32_t load_now, load_peak;   /* the render's share of the 5.8 ms a block, in 1/1000 */
 volatile uint32_t rdp_load_max, rdp_parts_max;  /* the highest since boot (tools/emu_load.sh reads them) */
+volatile uint32_t rdp_quiet_min = 16;           /* the brake's deepest since boot (tools/emu_load.sh) */
 volatile uint32_t rdp_load_sum, rdp_load_n;     /* and the sum over the blocks from 1.5 s on, for a mean */
 static int32_t rs_prev, rs_cur;                 /* the board's last two samples */
 static uint32_t rs_frac;                        /* where between them, Q16 */
@@ -70,6 +71,8 @@ static RDP_FAST void app_audio(int32_t *out, uint32_t n)
     if (load_now > rdp_load_max && fm1_ms > 1500u) rdp_load_max = load_now;
     if (fm1_ms > 1500u) { rdp_load_sum += load_now; rdp_load_n++; }
     if (rdp_active > rdp_parts_max) rdp_parts_max = rdp_active;
+    rdp_brake(load_now);                        /* too much: the faintest parts drop out for a while */
+    if (rdp_quiet < rdp_quiet_min && fm1_ms > 1500u) rdp_quiet_min = rdp_quiet;
 #endif
 }
 
@@ -247,7 +250,9 @@ static void draw_load(uint32_t now, uint32_t peak, uint32_t parts)   /* the bar:
     cv_rect(20 + (int32_t)(pk * 199u / 1000u), 0, 2, 8, C_WHITE);
     cv_blit(0, 208);
     p = put(p, "CPU "); p = put_u(p, now / 10u); p = put(p, "%  PEAK "); p = put_u(p, peak / 10u);
-    p = put(p, "%  PARTS "); p = put_u(p, parts); *p = 0;
+    p = put(p, "%  PARTS "); p = put_u(p, parts);
+    if (rdp_quiet < 10u) p = put(p, " *");      /* the brake is on (rdp_brake) */
+    *p = 0;
     draw_text_box(0, 220, 240, &FONT_S, s, C_OFF, 1);
 }
 
@@ -397,7 +402,7 @@ static void app_main(void)
             load_peak = 0;
             t_load = fm1_ms;
             if (pk >= hold || fm1_ms - t_hold > 2000u) { hold = pk; t_hold = fm1_ms; }
-            st = now | hold << 11 | parts << 22;
+            st = (now | hold << 11 | parts << 22) ^ (uint32_t)(rdp_quiet < 10u) << 31;
             if (st != load_drawn) { load_drawn = st; draw_load(now, hold, parts); }
         }
         idle_ok = 0;
