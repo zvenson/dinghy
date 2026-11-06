@@ -7,17 +7,34 @@ rdpiano emulates the board these pianos share: the HD6301 CPU running Roland's p
 from silicon analysis. RDPNO runs that emulation inside the FM-1's audio interrupt, reading the ROMs straight
 from flash, and plays it from the keys and MIDI.
 
-> **Status: experimental, plays on the FM-1.** The emulation core gives librdpiano's samples bit for bit
-> (`tests/rdp_compare.sh`, all three ROM sets), on one core or split over the chip's two. On the device, five
-> notes at once play clean, six mostly; hard, fast repeated six-note chords reach the limit. When the render
-> passes 90 % of the audio interrupt, an overload brake leaves out the faintest parts for a while (a `*` after
-> PARTS on the screen); the board itself never notices. Load on Joakim Eriksson's
-> [FM-1 emulator](https://github.com/joakimeriksson/fm1-emu) (strict mode, 240 MHz; the device is somewhat
-> slower), `tools/emu_load.sh`:
->
-> | idle | one key | 4-note chord | 6 keys | 8-note chord | 16 notes |
-> | --- | --- | --- | --- | --- | --- |
-> | 6 % | 27 % peak | 47 % peak | 64 % peak | 73 % peak | 78 % peak |
+> **Status: experimental, plays on the FM-1.** Chords of up to eight notes play clean, as long as they are not
+> struck very fast one after the other; then the board's own voice stealing (and, rarely, the overload brake)
+> steps in, hardly to be heard. The emulation gives librdpiano's samples bit for bit (`tests/rdp_compare.sh`,
+> all three ROM sets), on one core or split over two.
+
+## How eight notes fit into the FM-1
+
+The FM-1 has no floating point and 240 MHz; the board it emulates is a 2 MHz HD6301 CPU and a sound chip with
+16 voices of 10 parts each, 20,000 samples a second, all run cycle for cycle inside the FM-1's audio interrupt.
+At first a single note took most of the time. What brought it to eight:
+
+| | |
+| --- | --- |
+| **Both cores** | The chip's second core (started as in Clipper's HAL) computes half of the sounding voices each sample; every 32 samples they are dealt out again by the parts they sound, so both finish together. With few parts one core does it all. |
+| **Only what sounds** | The sound chip visits only the parts that sound (a mask per voice, and one over the voices), and parts more than ~60 dB down are not read from the wave ROM at all: their envelopes and phases go on, so the board sees no difference. |
+| **The common case, straight** | Nearly every sounding voice has the same two flags; for it the part loop has its own version, without the general case's mask arithmetic. Envelope and phase steps are worked out when the board writes them, not every sample. |
+| **The board's idle loop natively** | 94 % of the board's instructions are its scan over the voices and the main loop around it. These run as C code with the same registers, flags, RAM and cycles, instead of through the interpreter; other instructions skip the interpreter's interrupt checks while none could be taken. |
+| **Code and data in RAM** | The hot code (the `.fast` section), the board's program and the most used wave ROM pages are copied to RAM: the 32 KB flash cache would otherwise thrash. |
+| **No bursts** | Notes go to the board at least 3 ms apart, the screen and LEDs redraw only what changed. |
+| **Voices and the brake** | ENV, knob 4 sets how many voices the board uses (4..16): it steals among them by its own rule. Over 90 % load an overload brake leaves out the faintest parts for a while (`*` after PARTS on the screen) and puts them back under 70 %. |
+
+The result does not change the sound: every step was checked sample for sample against the plain emulation.
+Load on Joakim Eriksson's [FM-1 emulator](https://github.com/joakimeriksson/fm1-emu) (strict mode, 240 MHz; the
+device is somewhat slower), `tools/emu_load.sh`:
+
+| idle | one key | 4-note chord | 6 keys | 8-note chord | 16 notes |
+| --- | --- | --- | --- | --- | --- |
+| 6 % | 27 % peak | 47 % peak | 64 % peak | 73 % peak | 78 % peak |
 
 ## The panel, after the MKS-20's front
 
