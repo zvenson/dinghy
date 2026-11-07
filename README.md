@@ -22,7 +22,9 @@ rest. The smallest boat of the family, after the felucca and the sloop.
 
 <p align="center"><img src="docs/screen.png" width="240" alt="Dinghy's screen: the name, the note played, a keyboard with the keys that sound"></p>
 
-> **Status: 0.4.** 0.3 was tested on the FM-1: the install, MIDI in (pitch exact, 4 voices), USB audio at
+> **Status: 0.5.** 0.5 runs on newer FM-1s too: their flash chip, the UC25HQ80 (0xB36014), beside the Puya (0x856014);
+> before, a firmware built on Dinghy saved to RAM only on them. Dinghy's platform runs on the FM-1 in VIBE FM Link
+> (zvenson/vibe-link), tested there on 7.11.2026. 0.3 was tested on the FM-1: the install, MIDI in (pitch exact, 4 voices), USB audio at
 > 44.1 / 48 kHz, the keys, the screen, the octave kept in flash, and back to another firmware through the hub.
 > 0.4 brings OberVave's platform over: the TRS MIDI IN, the clock, blobs and slots, the loader's screen, the SMK-37.
 > That code runs on the device in OberVave (FM-1 and SMK-37); Dinghy 0.4 itself is tested on the host only so far.
