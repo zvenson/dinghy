@@ -72,11 +72,12 @@ jobs:
         with:
           subject-path: build/dinghy-[0-9]*.fwsc
 
+      # (the release builds only, not the dev ones: dinghy-smk37.fwsc – no comment inside the block below: it would be part of the pattern)
       - name: Release (tags only)
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            build/dinghy-[0-9]*.fwsc   # (the release builds, not the dev ones: dinghy-smk37.fwsc)
+            build/dinghy-[0-9]*.fwsc
             build/SHA256SUMS
           generate_release_notes: true
