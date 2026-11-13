@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# FM1_PLAY_VPS_V1
+set -Eeuo pipefail
+exec bash "$HOME/.local/share/fm1-live-vps/client.sh" "${1:-play}"

@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# FM1_SETUP_HELPER_V1
+set -Eeuo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
+cmd="${1:-help}"
+if (( $# )); then shift; fi
+case "$cmd" in
+  codex) exec codex "$@" ;;
+  claude) exec claude "$@" ;;
+  test) exec ./tests/run_host.sh "$@" ;;
+  build) exec env JIELI_TOOLCHAIN="$HOME/.jieli/toolchain" \
+    AC79_SDK="$HOME/fw-AC79_AIoT_SDK" ./build.sh "$@" ;;
+  play)
+    [[ -s build/dinghy.fwsc ]] || {
+      echo "Bygg först med ./fm1 build" >&2
+      exit 1
+    }
+    # Separate saves per Git worktree: ./build/ belongs to this checkout.
+    exec "$HOME/Applications/fm1-emu-0.4.0/fm1-live" \
+      --fwsc "$PWD/build/dinghy.fwsc" --flash "$PWD/build/emu-flash.bin" "$@"
+    ;;
+  github)
+    gh auth login --hostname github.com --git-protocol https --web
+    gh auth setup-git --hostname github.com
+    echo "Inloggad. Skapa ditt eget repo som nästa steg; upstream innehåller Dinghys källa."
+    ;;
+  help)
+    echo "Projekt: $PWD"
+    echo "./fm1 codex   Starta Codex i projektet"
+    echo "./fm1 claude  Starta Claude Code i projektet"
+    echo "./fm1 test    Skapa testljud och skärmbilder"
+    echo "./fm1 build   Bygg firmwarepaketet"
+    echo "./fm1 play    Spela senaste paketet i emulatorn"
+    echo "./fm1 github  Logga in på GitHub"
+    ;;
+  *) echo "Okänt kommando: $cmd" >&2; exit 2 ;;
+esac
