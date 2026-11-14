@@ -46,6 +46,9 @@ values (the last one turned in white), MIDI and the CPU load.
 | --- | --- | --- | --- | --- |
 | **HOME** | voice level 0..15 | treble level (10 kHz) | bass level (100 Hz) | the keys' velocity |
 | **FX** | tremolo rate 1..15 | tremolo depth (0 = off) | chorus rate 1..15 | chorus depth (0 = off) |
+
+**FX** pressed again on the FX page switches the chorus: **SPACE-D** (the default) or **BBD**; the page's title says
+which.
 | **ENV** | middle frequency 400 Hz..4 kHz (8 steps, as the MKS-20) | middle level | band width 1..8 (higher = narrower) | voices 4..16 (the board's own voice stealing among them) |
 
 On every page: **PRESETS** the voice, **ALGORITHM** the MIDI receive channel (OMNI, 1..16), **OCT- / OCT+** the
@@ -53,9 +56,11 @@ octave, **PLAY** the sustain pedal (latched), **MASTER** the volume. Levels go -
 the MKS-20. MIDI in: notes with velocity, CC 64, program change (the voice); the keys go out on USB-MIDI.
 Everything but the pedal is kept in flash. The settings are global, not per voice (the MKS-20 keeps them per tone).
 
-The board gives 16 voices; the equalizer (Simper SVFs), the chorus (a modulated delay, the two sides in
-antiphase) and the stereo tremolo are new integer approximations in `fx.c`, not emulations of the MKS-20's
-analog circuits.
+The board gives 16 voices. The SPACE-D chorus is rdpiano_juce's Space-D (`spaced.c`): a Roland LSP effect
+program, Roland's digital Dimension-D-style chorus, two delay lines swung in antiphase by a triangle and crossed to
+the two sides; it runs at the board's rate, right after it, sample for sample as rdpiano_juce's (checked on the
+computer). The equalizer (Simper SVFs), the BBD chorus (a modulated delay, the two sides in antiphase) and the
+stereo tremolo are new integer approximations in `fx.c`, not emulations of the MKS-20's analog circuits.
 
 ## The ROMs
 
@@ -119,7 +124,8 @@ Back to another firmware: the [FM-1 Firmware Hub](https://thefirmwarehub.com), o
 | --- | --- |
 | `firmware/src/rdp.c` | the board: librdpiano's `Mcu` (MAME's HD6301) and `SoundChip`, in C, no heap, no float. The ROM tables live in flash (3 bytes a wave address), the parameter ROM's 32 KB window of the patch is unpacked (LZ4) into the pool, the exponential tables are folded to 10 KB (`rdp_tables.h`), and the sound chip only visits the parts that sound |
 | `firmware/src/rdpno.c` | the app: keys, MIDI, the panel (HOME / FX / ENV), the screen; the board's 20/32 kHz resampled to 44.1 kHz |
-| `firmware/src/fx.c`, `fx_tables.h` | voice level, bass/middle/treble EQ, chorus, tremolo at 44.1 kHz; the constants from `tools/gen_fx_tables.py` |
+| `firmware/src/fx.c`, `fx_tables.h` | voice level, bass/middle/treble EQ, BBD chorus, tremolo at 44.1 kHz; the constants from `tools/gen_fx_tables.py` |
+| `firmware/src/spaced.c` | the Space-D chorus after rdpiano_juce (Giulio Zausa), at the board's rate |
 | `tools/pack_roms.py` | the ROMs, descrambled as librdpiano does it, into `firmware/gen/rdp_rom.h` |
 | `tests/rdp_test.c`, `rdp_ref.cpp`, `rdp_script.h`, `rdp_compare.sh` | the same script on the port and on librdpiano |
 | everything else | Dinghy's platform: updates, USB rescue, USB-MIDI/audio, panel, screen, storage, the SMK-37 |

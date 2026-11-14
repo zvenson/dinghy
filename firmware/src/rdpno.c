@@ -8,7 +8,8 @@
  *   ALGORITHM  the MIDI receive channel: OMNI or 1..16      on every page
  *   SELECT     the page: HOME -> FX -> ENV; or HOME, FX, ENV themselves
  *   HOME       KNOB 1 voice level, 2 treble level, 3 bass level, 4 the keys' velocity (the FM-1 feels none)
- *   FX         KNOB 1 tremolo rate, 2 tremolo depth, 3 chorus rate, 4 chorus depth (depth 0 = off)
+ *   FX         KNOB 1 tremolo rate, 2 tremolo depth, 3 chorus rate, 4 chorus depth (depth 0 = off);
+ *              FX again: the chorus type, SPACE-D (rdpiano_juce's Space-D, spaced.c) or BBD (fx.c's own)
  *   ENV        KNOB 1 middle frequency, 2 middle level, 3 band width (the middle equalizer), 4 voices: how many
  *              the board plays (4..16; its own voice stealing among them; fewer = less load: rdp.c rdp_voices)
  *   OCT- OCT+  the octave of the keys
@@ -38,7 +39,7 @@ static volatile uint32_t load_now, load_peak;   /* the render's share of the 5.8
 volatile uint32_t rdp_load_max, rdp_parts_max;  /* the highest since boot (tools/emu_load.sh reads them) */
 volatile uint32_t rdp_quiet_min = 16;           /* the brake's deepest since boot (tools/emu_load.sh) */
 volatile uint32_t rdp_load_sum, rdp_load_n;     /* and the sum over the blocks from 1.5 s on, for a mean */
-static int32_t rs_prev, rs_cur;                 /* the board's last two samples */
+static int32_t rs_prev, rs_cur, rs_prevr, rs_curr;   /* the board's last two samples (after fx_board: two sides) */
 static uint32_t rs_frac;                        /* where between them, Q16 */
 
 static RDP_FAST void app_audio(int32_t *out, uint32_t n)
@@ -52,15 +53,18 @@ static RDP_FAST void app_audio(int32_t *out, uint32_t n)
     if (rdp_paused) return;
     step = rdp_khz32 ? 47554u : 29721u;         /* 32000 or 20000 * 65536 / 44100 */
     for (i = 0; i < n; i++) {
-        int32_t s, l, r;
+        int32_t s, sr, l, r;
         while (rs_frac >= 65536u) {             /* the board's next sample */
             rs_frac -= 65536u;
             rs_prev = rs_cur;
-            rs_cur = rdp_render() >> 3;         /* +-2^17 or so -> Q15 with room for a full chord */
+            rs_prevr = rs_curr;
+            fx_board(rdp_render(), &rs_cur, &rs_curr);   /* Q15; Space-D here, at the board's rate */
         }
         s = rs_prev + (int32_t)(((int64_t)(rs_cur - rs_prev) * (int32_t)rs_frac) >> 16);
+        sr = rs_curr == rs_cur && rs_prevr == rs_prev ? s :
+             rs_prevr + (int32_t)(((int64_t)(rs_curr - rs_prevr) * (int32_t)rs_frac) >> 16);
         rs_frac += step;
-        fx_process(s, &l, &r);
+        fx_process(s, sr, &l, &r);
         out[2u * i] += l;
         out[2u * i + 1u] += r;
     }
@@ -86,6 +90,7 @@ static void set_defaults(void)
     set.patch = 0; set.ch = 0; set.vel = 100; set.oct = 0; set.page = 0; set.voices = 8;
     set.fx.vol = 15; set.fx.bass = FX_LEVEL0; set.fx.treble = FX_LEVEL0; set.fx.mid_level = FX_LEVEL0; set.fx.mid_freq = 3;
     set.fx.width = 3; set.fx.cho_rate = 8; set.fx.cho_depth = 0; set.fx.trm_rate = 8; set.fx.trm_depth = 0;
+    set.fx.cho_type = FX_SPACED;
 }
 static int set_ok(void)
 {
@@ -93,7 +98,8 @@ static int set_ok(void)
     return set.patch < RDP_NPATCH && set.ch <= 16u && set.vel && set.vel <= 127u && (int8_t)set.oct >= -2 &&
            (int8_t)set.oct <= 2 && set.page < 3u && set.voices >= 4u && set.voices <= 16u && f->vol <= 15u && f->bass < FX_NLEVEL && f->treble < FX_NLEVEL &&
            f->mid_level < FX_NLEVEL && f->mid_freq < FX_NMIDF && f->width < FX_NWIDTH && f->cho_rate &&
-           f->cho_rate <= 15u && f->cho_depth <= 15u && f->trm_rate && f->trm_rate <= 15u && f->trm_depth <= 15u;
+           f->cho_rate <= 15u && f->cho_depth <= 15u && f->trm_rate && f->trm_rate <= 15u && f->trm_depth <= 15u &&
+           f->cho_type <= FX_SPACED;
 }
 
 #define KEY0 53u                                /* key 0 = F3 */
@@ -133,6 +139,7 @@ enum { PG_HOME, PG_FX, PG_ENV, PG_N };
 enum { V_VOL, V_TREBLE, V_BASS, V_VEL, V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH, V_MFREQ, V_MLEVEL, V_WIDTH, V_VOICES,
        V_NONE };
 static const char *const PAGE_NAME[PG_N] = {"HOME", "FX: TREMOLO / CHORUS", "ENV: MIDDLE EQ"};
+static const char *const CHO_NAME[2] = {"FX: TREMOLO / BBD CHORUS", "FX: TREMOLO / SPACE-D"};   /* (FX again) */
 static const uint8_t PAGE_ROW[PG_N][4] = {
     {V_VOL, V_TREBLE, V_BASS, V_VEL}, {V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH}, {V_MFREQ, V_MLEVEL, V_WIDTH, V_VOICES}};
 static const char *const VAL_NAME[V_NONE] = {"VOICE LEVEL", "TREBLE LEVEL", "BASS LEVEL", "KEY VELOCITY",
@@ -212,7 +219,7 @@ static void draw_voice(void)
 }
 static void draw_page(uint32_t page)
 {
-    draw_text_box(0, 56, 240, &FONT_S, PAGE_NAME[page], C_LED, 1);
+    draw_text_box(0, 56, 240, &FONT_S, page == PG_FX ? CHO_NAME[set.fx.cho_type & 1u] : PAGE_NAME[page], C_LED, 1);
 }
 static void draw_row(uint32_t i, uint32_t v, int hot)
 {
@@ -337,6 +344,10 @@ static void app_main(void)
         if (b & (1u << BTN_PLAY)) { pedal(!sustain); midi_send(0xB0u | out_ch, 64, sustain ? 127u : 0u); }
         for (k = 0; k < PG_N; k++)
             if (b & (1u << PAGE_BTN[k]) && set.page != k) { set.page = (uint8_t)k; hot = V_NONE; dirty = 1; t_change = fm1_ms; }
+            else if (b & (1u << PAGE_BTN[k]) && k == PG_FX) {   /* FX on the FX page: the other chorus */
+                set.fx.cho_type ^= 1u;
+                fx_dirty = 1; dirty = 1; t_change = fm1_ms;
+            }
         if ((e = fm1_enc_take(ENC_SELECT)) != 0) {
             int32_t pg = ((int32_t)set.page + e) % (int32_t)PG_N;
             set.page = (uint8_t)(pg < 0 ? pg + (int32_t)PG_N : pg);
@@ -383,8 +394,8 @@ static void app_main(void)
 
         idle_ok = 1;                            /* the drawing below may read MIDI meanwhile (LCD_IDLE) */
         if (set.patch != patch_drawn) { patch_drawn = set.patch; draw_voice(); }
-        if (set.page != page_drawn) {
-            page_drawn = set.page;
+        if ((set.page | (uint32_t)set.fx.cho_type << 4) != page_drawn) {
+            page_drawn = set.page | (uint32_t)set.fx.cho_type << 4;
             draw_page(set.page);
             for (k = 0; k < 4u; k++) rows_drawn[k] = ~0u;
         }

@@ -1,5 +1,5 @@
 # RDPNO: a chord, PLAY as the sustain pedal, the pages (HOME: level, treble, bass; FX: tremolo, chorus; ENV: the
-# middle EQ), PRESETS to the next voice, a MIDI program change, ALGORITHM (the channel); the screen in between
+# middle EQ; FX again: the chorus type, SPACE-D -> BBD -> SPACE-D), PRESETS to the next voice, a MIDI program change, ALGORITHM (the channel); the screen in between
 200 keys 0x4880
 600 enc 2 -2
 700 enc 3 3
@@ -14,6 +14,9 @@
 2200 enc 5 9
 2400 keys 0x4880
 2600 shot
+2700 btn 2
+2800 shot
+3000 btn 2
 3200 keys 0
 3300 enc 0 1
 3400 enc 2 -1

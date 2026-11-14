@@ -3,13 +3,17 @@
  *   voice level -> bass shelf (100 Hz) -> middle bell (400 Hz..4 kHz, level, width) -> treble shelf (10 kHz),
  *   -10.5..+10.5 dB in 1.5 dB steps, as the MKS-20's (the shelves gentle: fx_tables.h)
  *   -> chorus (a BBD-like modulated delay, the two sides in antiphase) -> tremolo (stereo, in antiphase)
+ * or, with the chorus type SPACE-D, rdpiano_juce's Space-D chorus (spaced.c) at the board's rate, before all this
+ * (fx_board), and the equalizer on both sides
  * The equalizer is Andrew Simper's linear trapezoidal SVF; its constants are fx_tables.h (tools/gen_fx_tables.py),
  * the middle band's worked out here from them with one 32-bit division. The chorus and the tremolo are new
  * approximations of the MKS-20's (rdpiano_juce's are a DSP emulation too large for the FM-1, and a float LFO).
  *
  *   fx_set(&p)        main loop: the parameters -> the coefficients (the render takes them at its next sample)
- *   fx_process(x, &l, &r)   audio interrupt: one mono sample in (Q15), a stereo pair out */
+ *   fx_board(s, &l, &r)     audio interrupt: one sample of the board's (its scale) -> a pair, Q15 (Space-D or not)
+ *   fx_process(l, r, &l, &r) audio interrupt, at 44.1 kHz: the pair in (Q15; l == r unless Space-D), a pair out */
 #include "fx_tables.h"
+#include "spaced.c"
 
 typedef struct {                                /* the panel's values, as the screen shows them */
     uint8_t vol;                                /* 0..15 */
@@ -18,7 +22,13 @@ typedef struct {                                /* the panel's values, as the sc
     uint8_t width;                              /* 0..7: 1..8 on the screen, higher = narrower */
     uint8_t cho_rate, cho_depth;                /* 1..15, 0..15 (0 = off) */
     uint8_t trm_rate, trm_depth;                /* 1..15, 0..15 (0 = off) */
+    uint8_t cho_type;                           /* FX_BBD, FX_SPACED */
 } fx_par_t;
+enum { FX_BBD, FX_SPACED };
+/* Space-D's rate and depth for the MKS-20's 1..15 and 0..15: rdpiano_juce's spaceDRateFromMs(1000 / period / 4)
+ * over its chorusRateToMsPeriod, and spaceDDepthTable[depth / 15 * 128] (15: the table's last) */
+static const int32_t SD_RATE[15] = {46, 90, 136, 183, 230, 276, 323, 371, 415, 469, 508, 565, 607, 655, 711};
+static const int32_t SD_DEPTH[16] = {0, 17, 38, 58, 80, 102, 127, 150, 178, 204, 234, 262, 295, 326, 363, 397};
 
 typedef struct { int32_t a1, a2, a3, m0, m1, m2; } svf_c_t;   /* Q24 */
 typedef struct {
@@ -27,6 +37,8 @@ typedef struct {
     int32_t vol;                                /* Q12 */
     uint32_t cho_inc, cho_amp;                  /* LFO step; the delay's swing in 1/256 samples */
     uint32_t trm_inc, trm_depth;                /* LFO step; Q15 */
+    uint32_t sd_on;                             /* Space-D instead of the BBD chorus */
+    int32_t sd_rate, sd_depth;
 } fx_c_t;
 static fx_c_t fx_cs[2];
 static volatile uint32_t fx_cur;                /* the set the render uses; fx_set writes the other one */
@@ -60,14 +72,17 @@ static void fx_set(const fx_par_t *p)
     c->on_mid = lm != FX_LEVEL0;
     c->vol = FX_VOL[p->vol & 15u];
     c->cho_inc = FX_CHO_INC[(p->cho_rate ? p->cho_rate : 1u) - 1u];
-    c->cho_amp = (uint32_t)(p->cho_depth & 15u) * 9u * 256u;   /* up to 135 samples: +-3 ms */
+    c->sd_on = p->cho_type == FX_SPACED && p->cho_depth;
+    c->cho_amp = c->sd_on ? 0u : (uint32_t)(p->cho_depth & 15u) * 9u * 256u;   /* up to 135 samples: +-3 ms */
+    c->sd_rate = SD_RATE[(p->cho_rate ? p->cho_rate : 1u) - 1u];
+    c->sd_depth = SD_DEPTH[p->cho_depth & 15u];
     c->trm_inc = FX_TRM_INC[(p->trm_rate ? p->trm_rate : 1u) - 1u];
     c->trm_depth = (uint32_t)(p->trm_depth & 15u) * 32767u / 15u;
     fx_cur ^= 1u;                               /* (a 32-bit store: the render sees the old set or the new) */
 }
 
 typedef struct { int32_t ic1, ic2; } svf_s_t;
-static svf_s_t fx_sb, fx_sm, fx_st;
+static svf_s_t fx_sb, fx_sm, fx_st, fx_sbr, fx_smr, fx_str;   /* (..r: the right side, with Space-D) */
 
 static RDP_FAST int32_t svf(const svf_c_t *c, svf_s_t *s, int32_t v0)
 {
@@ -102,16 +117,42 @@ static RDP_FAST int32_t fx_tap(uint32_t lfo, uint32_t amp)   /* the delay line r
     return a + (((b - a) * (int32_t)fr) >> 8);
 }
 
-static RDP_FAST void fx_process(int32_t x, int32_t *l, int32_t *r)
+static uint32_t fx_sd_was;
+static RDP_FAST void fx_board(int32_t s, int32_t *l, int32_t *r)
 {
     const fx_c_t *c = &fx_cs[fx_cur];
-    int32_t yl, yr;
+    if (c->sd_on) {
+        int32_t sl, sr;
+        if (!fx_sd_was) { sd_reset(); fx_sd_was = 1; }   /* (switched on: no old sound in its lines) */
+        sd_rate = c->sd_rate;
+        sd_depth = c->sd_depth;
+        sd_process(s << 5, &sl, &sr);           /* as rdpiano_juce: << 5 in, >> 6 out */
+        *l = ((sl >> 8) * 5) >> 3;              /* >> 6, then >> 2 to Q15 as below, and -4 dB: as loud as dry */
+        *r = ((sr >> 8) * 5) >> 3;
+    } else {
+        fx_sd_was = 0;
+        *l = *r = s >> 3;                       /* +-2^17 or so -> Q15 with room for a full chord */
+    }
+}
+static RDP_FAST int32_t fx_eq(const fx_c_t *c, svf_s_t *sb, svf_s_t *sm, svf_s_t *st, int32_t x)
+{
     x = (x * c->vol) >> 12;
     x <<= 4;                                    /* (4 bits more for the filters' states) */
-    if (c->on_bass) x = svf(&c->bass, &fx_sb, x);
-    if (c->on_mid) x = svf(&c->mid, &fx_sm, x);
-    if (c->on_treble) x = svf(&c->treble, &fx_st, x);
-    x >>= 4;
+    if (c->on_bass) x = svf(&c->bass, sb, x);
+    if (c->on_mid) x = svf(&c->mid, sm, x);
+    if (c->on_treble) x = svf(&c->treble, st, x);
+    return x >> 4;
+}
+static RDP_FAST void fx_process(int32_t xl, int32_t xr, int32_t *l, int32_t *r)
+{
+    const fx_c_t *c = &fx_cs[fx_cur];
+    int32_t yl, yr, x;
+    if (c->sd_on) {                             /* (Space-D did the chorus: both sides through the equalizer) */
+        yl = fx_eq(c, &fx_sb, &fx_sm, &fx_st, xl);
+        yr = fx_eq(c, &fx_sbr, &fx_smr, &fx_str, xr);
+        goto tremolo;
+    }
+    x = fx_eq(c, &fx_sb, &fx_sm, &fx_st, xl);
     if (c->cho_amp) {
         int32_t wl, wr;
         fx_dl[fx_dw & (FX_DLEN - 1u)] = (int16_t)(x > 32767 ? 32767 : x < -32767 ? -32767 : x);
@@ -124,6 +165,7 @@ static RDP_FAST void fx_process(int32_t x, int32_t *l, int32_t *r)
     } else {
         yl = yr = x;
     }
+tremolo:
     if (c->trm_depth) {
         int32_t s = fx_sine(fx_trm_ph), d = (int32_t)c->trm_depth;
         int32_t gl = 32768 - ((d * ((32767 - s) >> 1)) >> 15), gr = 32768 - ((d * ((32767 + s) >> 1)) >> 15);
