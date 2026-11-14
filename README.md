@@ -90,7 +90,8 @@ pip3 install Pillow
 tools/get_toolchain.sh
 git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 \
     https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git ~/fw-AC79_AIoT_SDK
-./build.sh                                    # -> build/rdpno.fwsc
+./build.sh                                    # -> build/rdpno.fwsc (the pianos)
+./build.sh --set mks20b                       # -> build/rdpno-b.fwsc: RDPNO-B, harpsichord, clavi, vibraphone, e-pianos
 python3 tools/fm1_install.py build/rdpno.fwsc # over USB
 ```
 

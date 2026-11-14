@@ -3,10 +3,12 @@
 # Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 """Build Dinghy (on Felucca / SLOOP's platform): the app, the update loader and an installable .fwsc package.
 
-  tools/build.py [--release X.Y[-suffix]] [--board fm1|smk37] [--model pro|elite|mke]
+  tools/build.py [--set mks20a|mks20b|mk80] [--release X.Y[-suffix]] [--board fm1|smk37] [--model pro|elite|mke]
 
 Outputs in build/: rdpno.bin (app), loader/ota.bin (update loader),
 rdpno.fwsc (package). See README.md for the toolchain and the SDK.
+--set mks20b (or RDP_SET=mks20b) builds RDPNO-B, the MKS-20's B board (harpsichord, clavi, vibraphone, e-piano 1
+and 2): build/rdpno-b.fwsc; --set mk80: RDPNO-80, build/rdpno-mk80.fwsc. The ROM header is made again for the set.
 
 --board smk37 (or BOARD=smk37) builds for the M-Vave SMK-37 (docs/SMK37.md): -DBOARD_SMK37=1 for the app and the
 loader, identity SMK-37 Pro_990 (release X.Y: SMK-37 Pro_99Y), the SMK flash layout (fm1pkg_make.py, app slot
@@ -59,8 +61,13 @@ BOARD_PREFIX = {"fm1": "FM-1_95", "smk37": "SMK-37 Pro_95"}   # identity: prefix
 BOARD_DEFS = {"fm1": [], "smk37": ["-DBOARD_SMK37=1"]}
 MODELS = {"pro": "SMK-37 Pro", "elite": "SMK-37 Elite", "mke": "MKE-P37"}   # smk37: one keyboard, three names
 DATA_FAMILY = "RDPNO"               # the SMK store's owner tag (store.h): 1..7 of A-Z 0-9. Your fork: your own
-SCREEN_NAME = "RDPNO"               # the update loader's screen (FM-1, ldr_screen.c): the name and its colour (RGB565)
+# the update loader's screen (FM-1, ldr_screen.c): the name (ROM_SETS: RDPNO, RDPNO-B, RDPNO-80) and its colour (RGB565)
 SCREEN_COLOUR = 0xFCA7              # warm orange, #FF963C
+# The ROM set (tools/pack_roms.py --set; --set here or RDP_SET): the MKS-20's A board (the pianos, the default), its
+# B board (harpsichord, clavi, vibraphone, the e-pianos) or the MK-80's. Each its own name, on the screen, the
+# loader's screen and the package; the same identity (one RDPNO, three sets of sounds).
+ROM_SETS = {"mks20a": ("MKS-20 A", "RDPNO", ""), "mks20b": ("MKS-20 B", "RDPNO-B", "-b"), "mk80": ("MK-80", "RDPNO-80", "-mk80")}
+ROM_SET = "mks20a"
 PRODUCT = "FM-1_950"                # RDPNO: 95N (OUR_LOADER in the installer wants FM-1_9NN; Dinghy is 99N)
 VERSION = None                      # APP_VER for release builds
 
@@ -136,7 +143,7 @@ def ldr_wrap(image):
 def build_loader():
     LDR.mkdir(parents=True, exist_ok=True)
     src = FW / "loader"
-    flags = [*CFLAGS, *BOARD_DEFS[BOARD], "-Ifirmware/hal", "-Ifirmware/src", f'-DLDR_NAME="{SCREEN_NAME}"',
+    flags = [*CFLAGS, *BOARD_DEFS[BOARD], "-Ifirmware/hal", "-Ifirmware/src", f'-DLDR_NAME="{ROM_SETS[ROM_SET][1]}"',
              f"-DLDR_COLOUR={SCREEN_COLOUR:#x}u"]
     tc_all(("cc", "-c", src / "crt0_ldr.S", "-o", LDR / "crt0_ldr.o"),
            ("cc", *flags, "-c", src / "loader.c", "-o", LDR / "loader.o"))
@@ -169,9 +176,10 @@ def rom_header():
     """firmware/gen/rdp_rom.h: the ROMs, packed (tools/pack_roms.py). Not in git: made here from RDP_ROMS
     (rdpiano's roms/ folder; default ../rdpiano/roms) when it is missing, or always with RDP_REPACK=1."""
     h = FW / "gen" / "rdp_rom.h"
-    if h.exists() and os.environ.get("RDP_REPACK", "0") != "1":
-        return
-    r = subprocess.run([sys.executable, str(SRC / "tools" / "pack_roms.py")], cwd=SRC)
+    label = ROM_SETS[ROM_SET][0]
+    if h.exists() and os.environ.get("RDP_REPACK", "0") != "1" and f'#define RDP_SET_NAME "{label}"' in h.read_text():
+        return                                    # (made for this set already)
+    r = subprocess.run([sys.executable, str(SRC / "tools" / "pack_roms.py"), "--set", ROM_SET], cwd=SRC)
     if r.returncode:
         raise SystemExit("build: no ROMs, no RdPiano: see README.md (RDP_ROMS=/path/to/rdpiano/roms ./build.sh)")
 
@@ -179,7 +187,7 @@ def rom_header():
 def build_app():
     rom_header()
     flags = [*CFLAGS, *BOARD_DEFS[BOARD], "-Ifirmware/hal", "-Ifirmware/src", "-Ifirmware/gen", f'-DFELUCCA_ID="{PRODUCT}"',
-             f'-DAPP_VER="{VERSION or "0.0"}"']
+             f'-DAPP_VER="{VERSION or "0.0"}"', f'-DAPP_NAME="{ROM_SETS[ROM_SET][1]}"']
     if BOARD == "smk37":
         if not re.fullmatch(r"[A-Z0-9]{1,7}", DATA_FAMILY):
             raise SystemExit("DATA_FAMILY: 1..7 of A-Z 0-9")
@@ -311,13 +319,15 @@ def mmio_check():
 
 
 def main():
-    global PRODUCT, VERSION, BOARD, APP_SLOT
+    global PRODUCT, VERSION, BOARD, APP_SLOT, ROM_SET
     ap = argparse.ArgumentParser()
     ap.add_argument("--release", metavar="X.Y", help="release build: identity FM-1_99Y, version string X.Y")
     ap.add_argument("--board", choices=sorted(BOARD_PREFIX), default=None,
                     help="target board: fm1 (default) or smk37 (default: $BOARD, else fm1)")
     ap.add_argument("--model", choices=sorted(MODELS), default=None,
                     help="smk37: the model name, pro (default), elite or mke (default: $MODEL, else pro)")
+    ap.add_argument("--set", choices=sorted(ROM_SETS), default=os.environ.get("RDP_SET", "mks20a"),
+                    help="the ROM set: mks20a (the pianos, default), mks20b (harpsichord, clavi, vibraphone, e-pianos), mk80")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
     a = ap.parse_args()
     BOARD = (a.board or os.environ.get("BOARD") or "fm1").lower().replace("-", "")
@@ -328,7 +338,8 @@ def main():
         raise SystemExit(f"MODEL={model}: pro, elite or mke, with BOARD=smk37")
     fm1pkg_make.set_board(BOARD)
     APP_SLOT = fm1pkg_make.APP_SLOT
-    suffix = "" if BOARD == "fm1" else "-" + BOARD
+    ROM_SET = a.set
+    suffix = ROM_SETS[ROM_SET][2] + ("" if BOARD == "fm1" else "-" + BOARD)
     if model != "pro":              # another model name: identity, loader and update record (fm1_cc.h SMK_MODEL)
         BOARD_DEFS[BOARD] = [*BOARD_DEFS[BOARD], f'-DSMK_MODEL="{MODELS[model]}"']
         BOARD_PREFIX[BOARD] = BOARD_PREFIX[BOARD].replace(MODELS["pro"], MODELS[model])
