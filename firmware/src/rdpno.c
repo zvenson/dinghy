@@ -11,7 +11,7 @@
  *   FX         KNOB 1 tremolo rate, 2 tremolo depth, 3 chorus rate, 4 chorus depth (depth 0 = off);
  *              FX again: the chorus type, SPACE-D (rdpiano_juce's Space-D, spaced.c) or BBD (fx.c's own)
  *   ENV        KNOB 1 middle frequency, 2 middle level, 3 band width (the middle equalizer), 4 voices: how many
- *              the board plays (4..16; its own voice stealing among them; fewer = less load: rdp.c rdp_voices)
+ *              the board plays (4..10; its own voice stealing among them; fewer = less load: rdp.c rdp_voices)
  *   OCT- OCT+  the octave of the keys
  *   PLAY       the sustain pedal, latched (lit while it is down); CC 64 from MIDI works too
  *   MASTER     the volume (platform.c)
@@ -103,25 +103,34 @@ static int set_ok(void)
 }
 
 #define KEY0 53u                                /* key 0 = F3 */
+/* At most 10 voices: with the pedal down every key struck keeps one, and 12 (~110 parts) are more than the FM-1
+ * computes in time (distortion, and MIDI waits). 8 by default. */
+#define RDP_VOICES_MAX 10u
 static uint32_t sustain;
 /* Everything for the board goes through a queue, in order, and a note-on leaves it no sooner than STAGGER_MS
  * after the one before: keys struck together start a few ms apart, so their loud attacks (the board's busiest
  * moments, and all the parts at full level) do not all land in one audio block. 6 keys: 15 ms from first to last. */
 #define STAGGER_MS 3u
-static struct { uint8_t st, d1, d2; } evq[64];
+#define EVQ 128u
+static struct { uint8_t st, d1, d2; } evq[EVQ];
 static uint32_t evq_w, evq_r, ev_last_on, ev_any_on;
-static void ev_push(uint32_t st, uint32_t d1, uint32_t d2)
+/* A note-off or the pedal is never lost: when the queue is full it waits as a bit (ev_rel, ev_ped) and goes
+ * after the queue; a note-on that does not fit is dropped (and counted). ev_held: the notes on, as sent. */
+static uint32_t ev_held[4], ev_rel[4], ev_ped, ev_drops;
+static int ev_push(uint32_t st, uint32_t d1, uint32_t d2)
 {
-    if (evq_w - evq_r >= 64u) return;           /* (full: a burst no one plays; dropped) */
-    evq[evq_w & 63u].st = (uint8_t)st;
-    evq[evq_w & 63u].d1 = (uint8_t)d1;
-    evq[evq_w & 63u].d2 = (uint8_t)d2;
+    if (evq_w - evq_r >= EVQ) return 0;
+    evq[evq_w % EVQ].st = (uint8_t)st;
+    evq[evq_w % EVQ].d1 = (uint8_t)d1;
+    evq[evq_w % EVQ].d2 = (uint8_t)d2;
     evq_w++;
+    return 1;
 }
 static void ev_pump(void)                       /* main loop: what may go to the board now */
 {
+    uint32_t i;
     while (evq_r != evq_w) {
-        uint32_t st = evq[evq_r & 63u].st, d1 = evq[evq_r & 63u].d1, d2 = evq[evq_r & 63u].d2;
+        uint32_t st = evq[evq_r % EVQ].st, d1 = evq[evq_r % EVQ].d1, d2 = evq[evq_r % EVQ].d2;
         uint32_t on = st == 0x90u && d2;
         if (on && ev_any_on && fm1_ms - ev_last_on < STAGGER_MS) return;
         if (!rdp_room(3)) return;               /* (the board's own queue is full: next time) */
@@ -129,10 +138,50 @@ static void ev_pump(void)                       /* main loop: what may go to the
         if (on) { ev_last_on = fm1_ms; ev_any_on = 1; }
         evq_r++;
     }
+    for (i = 0; i < 128u; i++)                  /* the note-offs that did not fit, after it */
+        if (ev_rel[i >> 5] & 1u << (i & 31u)) {
+            if (!rdp_room(3)) return;
+            rdp_midi(0x80, i, 0);
+            ev_rel[i >> 5] &= ~(1u << (i & 31u));
+        }
+    if (ev_ped) {
+        if (!rdp_room(3)) return;
+        rdp_midi(0xB0, 64, ev_ped == 2u ? 127u : 0u);
+        ev_ped = 0;
+    }
 }
-static void note_on(uint32_t note, uint32_t vel) { ev_push(0x90, note, vel); }
-static void note_off(uint32_t note) { ev_push(0x80, note, 0); }
-static void pedal(uint32_t on) { sustain = on; ev_push(0xB0, 64, on ? 127u : 0u); }
+static void note_on(uint32_t note, uint32_t vel)
+{
+    note &= 127u;
+    ev_rel[note >> 5] &= ~(1u << (note & 31u));   /* (a release still waiting is overtaken: the key is down again) */
+    if (ev_push(0x90, note, vel)) ev_held[note >> 5] |= 1u << (note & 31u);
+    else ev_drops++;
+}
+static void note_off(uint32_t note)
+{
+    note &= 127u;
+    ev_held[note >> 5] &= ~(1u << (note & 31u));
+    if (!ev_push(0x80, note, 0)) ev_rel[note >> 5] |= 1u << (note & 31u);
+}
+static void pedal(uint32_t on)
+{
+    sustain = on;
+    if (!ev_push(0xB0, 64, on ? 127u : 0u)) ev_ped = on ? 2u : 1u;
+}
+static void release_all(void)                   /* CC 120 / 123, or MIDI in lost something: every note off */
+{
+    uint32_t i;
+    for (i = 0; i < 128u; i++)
+        if (ev_held[i >> 5] & 1u << (i & 31u)) note_off(i);
+}
+static uint32_t midi_lost(void)                 /* messages lost on the way in, since the start */
+{
+#if FELUCCA_UART
+    return um.drops + um.resync + ev_drops;
+#else
+    return ev_drops;
+#endif
+}
 
 /* ---- the pages: four knob rows each */
 enum { PG_HOME, PG_FX, PG_ENV, PG_N };
@@ -167,7 +216,7 @@ static void val_turn(uint32_t v, int32_t e)     /* a knob turned e detents */
 {
     static const uint8_t LO[V_NONE] = {0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 4};
     static const uint8_t HI[V_NONE] = {15, FX_NLEVEL - 1u, FX_NLEVEL - 1u, 127, 15, 15, 15, 15, FX_NMIDF - 1u, FX_NLEVEL - 1u,
-                                       FX_NWIDTH - 1u, 16};
+                                       FX_NWIDTH - 1u, RDP_VOICES_MAX};
     uint8_t *p = val_ptr(v);
     int32_t x = (int32_t)*p + (v == V_VEL ? 4 * e : e);
     *p = (uint8_t)(x < LO[v] ? LO[v] : x > HI[v] ? HI[v] : x);
@@ -237,13 +286,14 @@ static void draw_row(uint32_t i, uint32_t v, int hot)
     val_text(v, s);
     draw_text_box(158, ROW_Y(i), 74, &FONT_S, s, hot ? C_WHITE : C_ACC, 2);
 }
-static void draw_midi(int32_t oct, uint32_t ch, uint32_t sus)
+static void draw_midi(int32_t oct, uint32_t ch, uint32_t sus, uint32_t lost)
 {
     char s[40], *p = s;
     p = put(p, "MIDI RX-CH "); if (ch) p = put_u(p, ch); else p = put(p, "OMNI");
     p = put(p, "  OCT "); *p++ = oct < 0 ? '-' : '+'; *p++ = (char)('0' + (oct < 0 ? -oct : oct));
     if (sus) p = put(p, "  SUS");
-    p = put(p, cpu1_on() ? "  2 CORES" : "  1 CORE");
+    if (lost) { p = put(p, "  E"); p = put_u(p, lost > 99u ? 99u : lost); }   /* MIDI in lost messages */
+    else p = put(p, cpu1_on() ? "  2 CORES" : "  1 CORE");
     *p = 0;
     draw_text_box(0, 186, 240, &FONT_S, s, C_OFF, 1);
 }
@@ -275,6 +325,7 @@ static void midi_in(void)
         if (ty == 0x90u && d2) note_on(d1, d2);
         else if (ty == 0x80u || ty == 0x90u) note_off(d1);
         else if (ty == 0xB0u && d1 == 64u) pedal(d2 >= 64u);
+        else if (ty == 0xB0u && (d1 == 120u || d1 == 123u)) release_all();   /* all sound / all notes off */
         else if (ty == 0xC0u) want_patch = d1 % RDP_NPATCH;
     }
 }
@@ -290,12 +341,14 @@ static void app_main(void)
     uint32_t prev = 0, k, t_change = 0, dirty = 0, t_load = 0, hold = 0, t_hold = 0, hot = V_NONE;
     uint32_t page_drawn = ~0u, patch_drawn = ~0u, midi_drawn = ~0u, load_drawn = ~0u, rows_drawn[4], leds_set = ~0u;
     uint8_t held[27] = {0};
+    uint32_t lost_seen = 0;
 #if BOARD_SMK37
     uint8_t ext_note[FM1_NKEY] = {0};
     smk_pad_events = 1;                         /* the pads as events: taken and dropped (no use for them yet) */
 #endif
     for (k = 0; k < 4u; k++) rows_drawn[k] = ~0u;
     if (settings_load(&set, sizeof set) || !set_ok()) set_defaults();
+    if (set.voices > RDP_VOICES_MAX) set.voices = RDP_VOICES_MAX;
     fx_set(&set.fx);
     rdp_voices = set.voices;
 
@@ -404,9 +457,17 @@ static void app_main(void)
             st = v == V_NONE ? 0xFFFFu : (uint32_t)*val_ptr(v) | v << 8 | (uint32_t)(v == hot) << 12;
             if (st != rows_drawn[k]) { rows_drawn[k] = st; draw_row(k, v, v == hot); }
         }
-        if ((st = (uint32_t)(oct + 2) | set.ch << 4 | sustain << 9 | (uint32_t)cpu1_on() << 10) != midi_drawn) {
+        if (midi_lost() != lost_seen) {         /* a note-off may have been among them: everything off */
+            uint32_t was = sustain;
+            lost_seen = midi_lost();
+            release_all();
+            pedal(0);                           /* (the pedal's release may have been lost too: up, and down */
+            if (was) pedal(1);                  /* again as it was last heard) */
+        }
+        if ((st = (uint32_t)(oct + 2) | set.ch << 4 | sustain << 9 | (uint32_t)cpu1_on() << 10 |
+                  (lost_seen > 99u ? 99u : lost_seen) << 11) != midi_drawn) {
             midi_drawn = st;
-            draw_midi(oct, set.ch, sustain);
+            draw_midi(oct, set.ch, sustain, lost_seen);
         }
         if (fm1_ms - t_load >= 250u) {          /* the load four times a second, and the highest of the last 2 s */
             uint32_t now = load_now, pk = load_peak, parts = rdp_active;

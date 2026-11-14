@@ -158,7 +158,7 @@ static volatile uint32_t so_w, so_r;
 #endif
 
 /* MIDI rings: 4-byte USB-MIDI event packets */
-#define MQ 64u
+#define MQ 128u
 static uint32_t midi_in_q[MQ], midi_out_q[MQ];
 static volatile uint32_t mi_w, mi_r, mo_w, mo_r;
 static void midi_out_event(uint32_t pkt)            /* from the audio ISR */

@@ -19,7 +19,7 @@
 #define UM_EMPTY 0xFDu         /* undefined MIDI realtime byte: never sent, marks unwritten slots */
 static volatile uint8_t um_ring[UM_RING] __attribute__((aligned(16)));
 static struct {
-    uint32_t rd, bytes, drops, msgs;
+    uint32_t rd, bytes, drops, msgs, resync;       /* resync: the DMA lapped the reader (RDPNO) */
     uint8_t st, need, got, d0, sysex;
 } um;
 
@@ -38,14 +38,8 @@ static uint32_t um_len(uint32_t s)                 /* data bytes of a channel st
 
 static void um_byte(uint32_t b)
 {
-    if (b >= 0xF8u) {                              /* realtime: the state is kept; clock and transport */
-        if ((b == 0xF8u || b == 0xFAu || b == 0xFBu || b == 0xFCu) && mi_w - mi_r < MQ) {
-            midi_in_q[mi_w % MQ] = 0x1Fu | b << 8; /* (cable 1: from the TRS jack) */
-            RING_PUBLISH();
-            mi_w++;
-        }
-        return;
-    }
+    if (b >= 0xF8u)                                /* realtime: the state is kept; RDPNO has no use for clock and */
+        return;                                    /* transport (a stream of them would fill the queue) */
     if (b & 0x80u) {
         um.sysex = b == 0xF0u;
         um.st = b < 0xF0u ? (uint8_t)b : 0;        /* system common/SysEx cancel running status */
@@ -61,9 +55,14 @@ static void um_byte(uint32_t b)
         return;
     }
     {
-        uint32_t d1 = um.need == 2u ? um.d0 : b, d2 = um.need == 2u ? b : 0u;
+        uint32_t d1 = um.need == 2u ? um.d0 : b, d2 = um.need == 2u ? b : 0u, ty = um.st & 0xF0u;
         uint32_t pkt = 0x10u | (um.st >> 4) | (uint32_t)um.st << 8 | d1 << 16 | d2 << 24;   /* (cable 1) */
         um.got = 0;
+        /* RDPNO takes notes, CC 64 / 120 / 123 and program change only: aftertouch, pitch bend and the other
+         * controllers are not queued (keyboards send aftertouch in streams when struck hard: the queue would fill
+         * and a note-off be lost). (After setBfree-fm1's MIDI fix.) */
+        if (ty == 0xA0u || ty == 0xD0u || ty == 0xE0u || (ty == 0xB0u && d1 != 64u && d1 != 120u && d1 != 123u))
+            return;
         if (mi_w - mi_r < MQ) {
             midi_in_q[mi_w % MQ] = pkt;
             RING_PUBLISH();
@@ -91,6 +90,10 @@ static void um_drain(void)
         um.rd = (um.rd + 1u) & (UM_RING - 1u);
         um.bytes++;
         um_byte(b);                                /* a UM_EMPTY is an unknown realtime byte: ignored */
+    }
+    if (n == UM_RING) {                            /* a full lap read: the DMA may have outrun the reader; start */
+        um.resync++;                               /* clean (the app: everything off) */
+        um.st = um.got = um.sysex = 0;
     }
 }
 

@@ -26,7 +26,7 @@ At first a single note took most of the time. What brought it to eight:
 | **The board's idle loop natively** | 94 % of the board's instructions are its scan over the voices and the main loop around it. These run as C code with the same registers, flags, RAM and cycles, instead of through the interpreter; other instructions skip the interpreter's interrupt checks while none could be taken. |
 | **Code and data in RAM** | The hot code (the `.fast` section), the board's program and the most used wave ROM pages are copied to RAM: the 32 KB flash cache would otherwise thrash. |
 | **No bursts** | Notes go to the board at least 3 ms apart, the screen and LEDs redraw only what changed. |
-| **Voices and the brake** | ENV, knob 4 sets how many voices the board uses (4..16): it steals among them by its own rule. Over 90 % load an overload brake leaves out the faintest parts for a while (`*` after PARTS on the screen) and puts them back under 70 %. |
+| **Voices and the brake** | ENV, knob 4 sets how many voices the board uses (4..10, 8 by default; with the pedal down every key struck keeps one): it steals among them by its own rule. Over 90 % load an overload brake leaves out the faintest parts for a while (`*` after PARTS on the screen) and puts them back under 70 %. |
 
 The result does not change the sound: every step was checked sample for sample against the plain emulation.
 Load on Joakim Eriksson's [FM-1 emulator](https://github.com/joakimeriksson/fm1-emu) (strict mode, 240 MHz; the
@@ -49,11 +49,14 @@ values (the last one turned in white), MIDI and the CPU load.
 
 **FX** pressed again on the FX page switches the chorus: **SPACE-D** (the default) or **BBD**; the page's title says
 which.
-| **ENV** | middle frequency 400 Hz..4 kHz (8 steps, as the MKS-20) | middle level | band width 1..8 (higher = narrower) | voices 4..16 (the board's own voice stealing among them) |
+| **ENV** | middle frequency 400 Hz..4 kHz (8 steps, as the MKS-20) | middle level | band width 1..8 (higher = narrower) | voices 4..10, 8 by default (the board's own voice stealing among them) |
 
 On every page: **PRESETS** the voice, **ALGORITHM** the MIDI receive channel (OMNI, 1..16), **OCT- / OCT+** the
 octave, **PLAY** the sustain pedal (latched), **MASTER** the volume. Levels go -10.5..+10.5 dB in 1.5 dB steps, as on
-the MKS-20. MIDI in: notes with velocity, CC 64, program change (the voice); the keys go out on USB-MIDI.
+the MKS-20. MIDI in: notes with velocity, CC 64, CC 120 / 123 (all notes off), program change (the voice); the keys go out
+on USB-MIDI. On the DIN/TRS input aftertouch, pitch bend, the other controllers and clock are dropped at once (a
+keyboard's aftertouch stream would fill the queue); a note-off or the pedal is never dropped on the way to the
+board; if a message is lost anyway, every note is released and the MIDI line shows `E` and the count.
 Everything but the pedal is kept in flash. The settings are global, not per voice (the MKS-20 keeps them per tone).
 
 The board gives 16 voices. The SPACE-D chorus is rdpiano_juce's Space-D (`spaced.c`): a Roland LSP effect
