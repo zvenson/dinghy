@@ -138,3 +138,5 @@ Details, credits and third-party parts in [LICENSING.md](LICENSING.md).
 The platform is Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments, with SLOOP's changes (isod89);
 the SMK-37 layer by M. Geisler (genkigenki); the loader's screen after Skiff (illuminus5). Dinghy (the app, the host
 mode, the docs) by zvenson.
+
+You can also try Dinghy in the browser, no flashing needed, in the free community [FM-1 Emulator](https://fm1-emulator.atst.tools/).
