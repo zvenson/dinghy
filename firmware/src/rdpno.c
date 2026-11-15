@@ -39,6 +39,17 @@ static volatile uint32_t load_now, load_peak;   /* the render's share of the 5.8
 volatile uint32_t rdp_load_max, rdp_parts_max;  /* the highest since boot (tools/emu_load.sh reads them) */
 volatile uint32_t rdp_quiet_min = 16;           /* the brake's deepest since boot (tools/emu_load.sh) */
 volatile uint32_t rdp_load_sum, rdp_load_n;     /* and the sum over the blocks from 1.5 s on, for a mean */
+/* The overload exit: a render over its block for 0.2 s on end has the main loop starved, and the note-offs that
+ * would end it wait there (once the voices hang, it stays: up to switching off). Then ~60 ms of silence: the main
+ * loop releases every note and the pedal (rdp_panic_req), the board takes them after. */
+#define PANIC_BLOCKS 35u                        /* 35 blocks over 98 %: 0.2 s */
+#define PANIC_SILENT 10u                        /* 10 blocks of silence: 58 ms */
+static uint32_t panic_n;
+#ifndef DINGHY_HOST
+static uint32_t over_n;
+#endif
+static volatile uint32_t rdp_panic_req;
+volatile uint32_t rdp_panics;                   /* since boot (tools/emu_load.sh) */
 static int32_t rs_prev, rs_cur, rs_prevr, rs_curr;   /* the board's last two samples (after fx_board: two sides) */
 static uint32_t rs_frac;                        /* where between them, Q16 */
 
@@ -51,6 +62,7 @@ static RDP_FAST void app_audio(int32_t *out, uint32_t n)
     if (!rdp_ready) return;
     rdp_take();                                 /* a voice change: the render pauses until the main loop has done it */
     if (rdp_paused) return;
+    if (panic_n) { panic_n--; return; }         /* the overload exit: silence while the main loop releases */
     step = rdp_khz32 ? 47554u : 29721u;         /* 32000 or 20000 * 65536 / 44100 */
     for (i = 0; i < n; i++) {
         int32_t s, sr, l, r;
@@ -76,6 +88,13 @@ static RDP_FAST void app_audio(int32_t *out, uint32_t n)
     if (fm1_ms > 1500u) { rdp_load_sum += load_now; rdp_load_n++; }
     if (rdp_active > rdp_parts_max) rdp_parts_max = rdp_active;
     rdp_brake(load_now);                        /* too much: the faintest parts drop out for a while */
+    if (load_now < 980u) over_n = 0;
+    else if (++over_n >= PANIC_BLOCKS) {
+        over_n = 0;
+        panic_n = PANIC_SILENT;
+        rdp_panic_req = 1;
+        rdp_panics++;
+    }
     if (rdp_quiet < rdp_quiet_min && fm1_ms > 1500u) rdp_quiet_min = rdp_quiet;
 #endif
 }
@@ -351,6 +370,7 @@ static void app_main(void)
     if (set.voices > RDP_VOICES_MAX) set.voices = RDP_VOICES_MAX;
     fx_set(&set.fx);
     rdp_voices = set.voices;
+    rdp_side = fx_side;                         /* Space-D on the second core, beside the board's CPU */
 
     lcd_fill(0, 0, 240, 240, C_BLACK);
     draw_text_box(0, 100, 240, &FONT_S, APP_NAME "  v" APP_VER, C_ACC, 1);
@@ -456,6 +476,11 @@ static void app_main(void)
             uint32_t v = PAGE_ROW[set.page][k];
             st = v == V_NONE ? 0xFFFFu : (uint32_t)*val_ptr(v) | v << 8 | (uint32_t)(v == hot) << 12;
             if (st != rows_drawn[k]) { rows_drawn[k] = st; draw_row(k, v, v == hot); }
+        }
+        if (rdp_panic_req) {                    /* the overload exit (app_audio): every note and the pedal off */
+            rdp_panic_req = 0;
+            release_all();
+            pedal(0);
         }
         if (midi_lost() != lost_seen) {         /* a note-off may have been among them: everything off */
             uint32_t was = sustain;

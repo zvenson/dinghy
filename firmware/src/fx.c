@@ -117,22 +117,35 @@ static RDP_FAST int32_t fx_tap(uint32_t lfo, uint32_t amp)   /* the delay line r
     return a + (((b - a) * (int32_t)fr) >> 8);
 }
 
-static uint32_t fx_sd_was;
+/* Space-D runs as the board's side work (rdp.c rdp_side: on the second core, while the first runs the board's
+ * CPU): fx_side takes the sample the render has just made, fx_board picks the result up after it */
+static volatile uint32_t fx_sd_go;              /* fx_board: Space-D is on (and was reset) */
+static volatile int32_t fx_sd_l, fx_sd_r;
+static RDP_FAST void fx_side(int32_t s)
+{
+    int32_t sl, sr;
+    if (!fx_sd_go) return;
+    sd_process(s << 5, &sl, &sr);               /* as rdpiano_juce: << 5 in, >> 6 out */
+    fx_sd_l = sl;
+    fx_sd_r = sr;
+}
 static RDP_FAST void fx_board(int32_t s, int32_t *l, int32_t *r)
 {
     const fx_c_t *c = &fx_cs[fx_cur];
-    if (c->sd_on) {
-        int32_t sl, sr;
-        if (!fx_sd_was) { sd_reset(); fx_sd_was = 1; }   /* (switched on: no old sound in its lines) */
-        sd_rate = c->sd_rate;
-        sd_depth = c->sd_depth;
-        sd_process(s << 5, &sl, &sr);           /* as rdpiano_juce: << 5 in, >> 6 out */
-        *l = ((sl >> 8) * 5) >> 3;              /* >> 6, then >> 2 to Q15 as below, and -4 dB: as loud as dry */
-        *r = ((sr >> 8) * 5) >> 3;
-    } else {
-        fx_sd_was = 0;
-        *l = *r = s >> 3;                       /* +-2^17 or so -> Q15 with room for a full chord */
+    sd_rate = c->sd_rate;
+    sd_depth = c->sd_depth;
+    if (c->sd_on && fx_sd_go) {
+        *l = ((fx_sd_l >> 8) * 5) >> 3;         /* >> 6, then >> 2 to Q15 as below, and -4 dB: as loud as dry */
+        *r = ((fx_sd_r >> 8) * 5) >> 3;
+        return;
     }
+    if (c->sd_on) {                             /* switched on: its lines empty, from the next sample on */
+        sd_reset();
+        fx_sd_go = 1;
+    } else {
+        fx_sd_go = 0;
+    }
+    *l = *r = s >> 3;                           /* +-2^17 or so -> Q15 with room for a full chord */
 }
 static RDP_FAST int32_t fx_eq(const fx_c_t *c, svf_s_t *sb, svf_s_t *sm, svf_s_t *st, int32_t x)
 {
