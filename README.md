@@ -7,10 +7,19 @@ rdpiano emulates the board these pianos share: the HD6301 CPU running Roland's p
 from silicon analysis. RDPNO runs that emulation inside the FM-1's audio interrupt, reading the ROMs straight
 from flash, and plays it from the keys and MIDI.
 
-> **Status: experimental, plays on the FM-1.** Chords of up to eight notes play clean, as long as they are not
-> struck very fast one after the other; then the board's own voice stealing (and, rarely, the overload brake)
-> steps in, hardly to be heard. The emulation gives librdpiano's samples bit for bit (`tests/rdp_compare.sh`,
-> all three ROM sets), on one core or split over two.
+> **Status: v0.1, plays on the FM-1** (old and new flash chip), in three builds: **RDPNO** (MKS-20 voices 1-3, the
+> pianos), **RDPNO-B** (MKS-20 voices 4-8: harpsichord, clavi, vibraphone, e-piano 1 and 2) and **RDPNO-80** (the
+> Rhodes MK-80's eight tones). The emulation gives librdpiano's samples bit for bit (`tests/rdp_compare.sh`), on
+> one core or split over two.
+>
+> **No ready-made firmware:** the ROMs are Roland's and are not in this repository, so you build RDPNO yourself,
+> with the ROMs on your own computer, in one command ([Build it yourself](#build-it-yourself)). Please do not
+> publish the packages you build: they contain the ROMs.
+
+**How many notes:** the voices at 20 kHz (pianos, vibraphone, e-piano 1, the MK-80's Classic, Special, Blend,
+A.Piano 1/2) play 6 to 8 notes clean, also with the pedal; the ones at 32 kHz (harpsichord, clavi, e-piano 2, the
+MK-80's Contemporary and Clavi) cost 1.6 times as much: about 6 notes, and 4-note chords with the pedal are at the
+limit. VOICES (ENV, knob 4) at 8 works best.
 
 ## How eight notes fit into the FM-1
 
@@ -47,10 +56,10 @@ values (the last one turned in white), MIDI and the CPU load.
 | --- | --- | --- | --- | --- |
 | **HOME** | voice level 0..15 | treble level (10 kHz) | bass level (100 Hz) | the keys' velocity |
 | **FX** | tremolo rate 1..15 | tremolo depth (0 = off; 1.5 dB a step, 15: full) | chorus rate 1..15 | chorus depth (0 = off) |
+| **ENV** | middle frequency 400 Hz..4 kHz (8 steps, as the MKS-20) | middle level | band width 1..8 (higher = narrower) | voices 4..10, 8 by default (the board's own voice stealing among them) |
 
 **FX** pressed again on the FX page switches the chorus: **SPACE-D** (the default) or **BBD**; the page's title says
-which.
-| **ENV** | middle frequency 400 Hz..4 kHz (8 steps, as the MKS-20) | middle level | band width 1..8 (higher = narrower) | voices 4..10, 8 by default (the board's own voice stealing among them) |
+which. The tremolo is a stereo one, as rdpiano's: the two sides swing in antiphase.
 
 On every page: **PRESETS** the voice, **ALGORITHM** the MIDI receive channel (OMNI, 1..16), **OCT- / OCT+** the
 octave, **PLAY** the sustain pedal (latched), **MASTER** the volume. Levels go -10.5..+10.5 dB in 1.5 dB steps, as on
@@ -66,38 +75,42 @@ the two sides; it runs at the board's rate, right after it, sample for sample as
 computer). The equalizer (Simper SVFs), the BBD chorus (a modulated delay, the two sides in antiphase) and the
 stereo tremolo are new integer approximations in `fx.c`, not emulations of the MKS-20's analog circuits.
 
-## The ROMs
+## Build it yourself
 
-The ROMs are Roland's. They are **not** in this repository, and a build contains them: build it for yourself, do
-not publish the packages. `tools/pack_roms.py` takes them from rdpiano's `roms/` folder:
-
-```sh
-git clone --depth 1 https://github.com/giulioz/rdpiano ../rdpiano     # the ROMs are in ../rdpiano/roms
-python3 tools/pack_roms.py                    # -> firmware/gen/rdp_rom.h: MKS-20 voices 1-3, PIANO 1..3
-python3 tools/pack_roms.py --set mks20b       # MKS-20 voices 4-8: HARPSICHORD, CLAVI, VIBRAPHONE, E-PIANO 1, 2
-python3 tools/pack_roms.py --set mk80         # Rhodes MK-80 (Roland's 1989 piano on the same board): 8 tones
-python3 tools/pack_roms.py --patches 0,1      # only these voices of the set (saves flash, see below)
-```
-
-`./build.sh` runs it by itself when `firmware/gen/rdp_rom.h` is missing (`RDP_ROMS=/path/to/roms` if they are
-elsewhere, `RDP_SET=mks20b`, `RDP_REPACK=1` to pack again). **One wave set per build:** the MKS-20 itself has two
-(voices 1-3 and 4-8), each 384 KB, and an FM-1 app may have 568 KB in all. So all eight MKS-20 voices make two
-firmwares (`mks20a`, `mks20b`); the MK-80 has its eight on one set.
-
-## Build and install
-
-As Dinghy (its README has the details): Linux x86-64 (or Docker), Python 3 with Pillow, the JieLi toolchain and
-three files of the AC79 SDK.
+You need: an FM-1 (or an SMK-37), a computer with **Linux x86-64**, or **Windows with WSL** (Ubuntu from the
+Microsoft Store), and about 1 GB of disk. In a terminal (under Windows: the Ubuntu window):
 
 ```sh
-pip3 install Pillow
-tools/get_toolchain.sh
-git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 \
-    https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git ~/fw-AC79_AIoT_SDK
-./build.sh                                    # -> build/rdpno.fwsc (the pianos)
-./build.sh --set mks20b                       # -> build/rdpno-b.fwsc: RDPNO-B, harpsichord, clavi, vibraphone, e-pianos
-python3 tools/fm1_install.py build/rdpno.fwsc # over USB
+git clone https://github.com/R-Jeb/rdpno-fm1 ~/rdpno-fm1
+cd ~/rdpno-fm1
+sh tools/setup.sh
 ```
+
+`tools/setup.sh` installs the packages (asks for your password once), the JieLi toolchain and JieLi's AC79 SDK,
+fetches the ROM dumps into `../rdpiano/roms` (from [rdpiano](https://github.com/giulioz/rdpiano)'s repository) and
+builds the three firmwares:
+
+| Package | | Voices |
+| --- | --- | --- |
+| `build/rdpno.fwsc` | RDPNO, MKS-20 voices 1-3 | PIANO 1, PIANO 2, PIANO 3 |
+| `build/rdpno-b.fwsc` | RDPNO-B, MKS-20 voices 4-8 | HARPSICHORD, CLAVI, VIBRAPHONE, E-PIANO 1, E-PIANO 2 |
+| `build/rdpno-mk80.fwsc` | RDPNO-80, Rhodes MK-80 | CLASSIC, SPECIAL, BLEND, CONTEMPORARY, A.PIANO 1, A.PIANO 2, CLAVI, VIBRAPHONE |
+
+Under WSL it copies them into Windows' `Downloads` too (or take them from `\\wsl.localhost\Ubuntu\home\<you>\rdpno-fm1\build`
+in the Explorer).
+
+**Install** one of them with M-VAVE's **M-UPGRADE**, or the [FM-1 Firmware Hub](https://thefirmwarehub.com)'s
+local-file install in Chrome or Edge: FM-1 switched on, connected straight to the computer, **every other MIDI
+program and browser tab closed** (Windows lets one program at a time open a MIDI port; else the installer says the
+device "did not answer"). Or from the terminal: `python3 tools/fm1_install.py build/rdpno.fwsc`.
+
+**Later:** `git pull`, then `./build.sh` (RDPNO), `./build.sh --set mks20b` (RDPNO-B) or `./build.sh --set mk80`
+(RDPNO-80). The ROM data are packed for the set by themselves (`tools/pack_roms.py`; `RDP_ROMS=/path` if the dumps
+are elsewhere, `RDP_PATCHES=0,1` for fewer voices if a build does not fit: 20..28 KB a parameter window).
+
+**The ROMs:** Roland's. They are not in this repository, nor in anything GitHub builds: its workflow builds with
+blank ROMs (`RDP_NO_ROMS=1`), and that firmware only says *NO ROMS: BUILD IT YOURSELF*. Keep the dumps and your
+packages to yourself.
 
 Without an FM-1:
 
@@ -107,21 +120,17 @@ tests/rdp_compare.sh ../rdpiano               # the C port against librdpiano, s
 sh tests/run_tests.sh                         # everything (after ./build.sh)
 ```
 
-Back to another firmware: the [FM-1 Firmware Hub](https://thefirmwarehub.com), or hold **OCT-** while switching on
-(the USB rescue) and install from there.
+## If the FM-1 gets stuck
 
-## What to check first
-
-1. **Does it fit?** `./build.sh` prints `image N B of 581564`. MKS-20 voices 1-3 fit (the workflow's build passes).
-   Estimated with another compiler: about 580 KB for the MK-80 with all 8 tones (on the edge). If the build says the image is too big, leave out
-   voices: `RDP_PATCHES=0,1 RDP_REPACK=1 ./build.sh` (every parameter window left out: 20..28 KB).
-2. **Is the CPU fast enough?** The screen shows the sound's share of the audio interrupt's 5.8 ms (CPU, and the
-   PEAK of the last 2 s) and the parts sounding. Over ~90 % the brake steps in (`*`); if it still crackles,
-   fewer voices (ENV, knob 4) make the board steal earlier.
-3. **Does the timing hold?** `rdp_exact = 1` (the default, in `rdp.c`) runs the board's CPU at its real 2 MHz,
-   100 cycles per sample; librdpiano runs 100 *instructions* per sample, about four times faster. The two sound
-   the same on the test script (same envelopes; big chords start a little more staggered, as on the board), and
-   `rdp_exact = 0` is there to compare.
+- **Back to another firmware:** the [FM-1 Firmware Hub](https://thefirmwarehub.com), or hold **OCT-** while
+  switching on (the USB rescue: no sound, only the installer) and install from there.
+- **The installer finds the FM-1 but it "does not answer"** (a firmware with broken USB-MIDI): close every other
+  MIDI program first. If it still does not answer, [M-Flasher](https://github.com/kmplngj/m-flasher) (Windows, macOS,
+  Linux): with the firmware running, its **DOWNLOAD MODE** button switches the FM-1 into the chip's own USB
+  download mode (that way only needs the computer-to-FM-1 direction), it backs up the whole flash, and installs a
+  `.fwsc`, e.g. M-VAVE's original `FM-1.fwsc`; from that, RDPNO again with M-UPGRADE.
+- **Do not build with `-O2`:** USB-MIDI breaks with it, and no installer reaches the FM-1 any more (that is how
+  the way above was found).
 
 ## How it works
 

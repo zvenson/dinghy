@@ -280,7 +280,8 @@ static void val_text(uint32_t v, char *p)
 static void draw_voice(void)
 {
     char s[40], *p = s;
-    draw_text_box(0, 10, 240, &FONT_S, RDP_PATCH[set.patch].name, C_ACC, 1);
+    draw_text_box(0, 10, 240, &FONT_S, RDP_NO_ROMS ? "NO ROMS: BUILD IT YOURSELF" : RDP_PATCH[set.patch].name,
+                  RDP_NO_ROMS ? C_LED : C_ACC, 1);
     p = put(p, "VOICE "); p = put_u(p, RDP_PATCH[set.patch].num); p = put(p, "  "); p = put(p, RDP_SET_NAME);
     p = put(p, "  "); p = put_u(p, RDP_PATCH[set.patch].khz); p = put(p, "kHz"); *p = 0;
     draw_text_box(0, 32, 240, &FONT_S, s, C_OFF, 1);
@@ -375,7 +376,11 @@ static void app_main(void)
     lcd_fill(0, 0, 240, 240, C_BLACK);
     draw_text_box(0, 100, 240, &FONT_S, APP_NAME "  v" APP_VER, C_ACC, 1);
     if (rdp_init(set.patch)) {                  /* (a broken rdp_rom.h: say so, stay in the main loop) */
+#if RDP_NO_ROMS
+        draw_text_box(0, 130, 240, &FONT_S, "NO ROMS: BUILD IT YOURSELF", C_LED, 1);
+#else
         draw_text_box(0, 130, 240, &FONT_S, "ROM DATA BROKEN", C_LED, 1);
+#endif
     } else {
         rs_frac = 65536u;
         rdp_ready = 1;
