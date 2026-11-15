@@ -23,9 +23,15 @@ run "SMK-37 app on the host: the default script" env BOARD=smk37 sh tests/run_ho
 run "FM-1 MIDI: USB, the TRS jack, a clock, the channel" sh tests/run_host.sh tests/scripts/midi.txt
 run "SMK-37: velocity, a pad, an outer key, the pitch wheel" env BOARD=smk37 sh tests/run_host.sh tests/scripts/smk37.txt
 run "RDPNO: a chord, the PLAY pedal, the HOME / FX / ENV pages, PRESETS, a program change, the channel" sh tests/run_host.sh tests/scripts/rdpno.txt
+if grep -q "define RDP_NO_ROMS 1" firmware/gen/rdp_rom.h 2>/dev/null; then
+    echo "== RdPiano core: skipped (built without the ROMs: RDP_NO_ROMS=1)"
+else
 $CC -Ifirmware/src -Ifirmware/gen -Itests -o "$OUT/rdp_test" tests/rdp_test.c
 run "RdPiano core (rdp.c): notes, pedal, patch changes, 18 notes on 16 voices" "$OUT/rdp_test" "$OUT/rdp_test.raw"
-if [ -d "${RDPIANO:-../rdpiano}/librdpiano/src" ]; then
+fi
+if grep -q "define RDP_NO_ROMS 1" firmware/gen/rdp_rom.h 2>/dev/null; then
+    echo "== RdPiano core vs librdpiano: skipped (no ROMs)"
+elif [ -d "${RDPIANO:-../rdpiano}/librdpiano/src" ]; then
     run "RdPiano core = rdpiano's librdpiano, sample for sample" sh tests/rdp_compare.sh
 else
     echo "== RdPiano core vs librdpiano: skipped (no rdpiano checkout; RDPIANO=... or ../rdpiano)"

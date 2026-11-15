@@ -27,6 +27,9 @@
 #include <stdint.h>
 #include "rdp_tables.h"
 #include "rdp_rom.h"
+#ifndef RDP_NO_ROMS
+#define RDP_NO_ROMS 0                           /* (a header from before --no-roms) */
+#endif
 
 typedef uint8_t u8;
 typedef int8_t s8;
@@ -3485,6 +3488,10 @@ static void rdp_reset(void)                     /* librdpiano Mcu::reset */
 static int rdp_init(u32 patch)                  /* main loop, before the render runs: 0 = ready */
 {
     u32 i;
+#if RDP_NO_ROMS
+    (void)patch; (void)i;
+    return -1;                                  /* (built without Roland's ROMs: tools/pack_roms.py --no-roms) */
+#else
     for (i = 0; i < sizeof rdp_prog; i++) rdp_prog[i] = RDP_PROG[i];
     rdp_fast = 1;                               /* the scan's bytes, as mcu_scan knows them */
     for (i = 0; i < sizeof RDP_SCAN; i++)
@@ -3504,6 +3511,7 @@ static int rdp_init(u32 patch)                  /* main loop, before the render 
     for (i = 0; i < 1024u; i++) rdp_render();
     rdp_push(0x31); rdp_push(0x30);
     return 0;
+#endif
 }
 
 /* the CPU's macros stay in here */

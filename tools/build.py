@@ -177,8 +177,10 @@ def rom_header():
     (rdpiano's roms/ folder; default ../rdpiano/roms) when it is missing, or always with RDP_REPACK=1."""
     h = FW / "gen" / "rdp_rom.h"
     label = ROM_SETS[ROM_SET][0]
-    if h.exists() and os.environ.get("RDP_REPACK", "0") != "1" and f'#define RDP_SET_NAME "{label}"' in h.read_text():
-        return                                    # (made for this set already)
+    no_roms = os.environ.get("RDP_NO_ROMS", "") == "1"
+    if (h.exists() and os.environ.get("RDP_REPACK", "0") != "1" and f'#define RDP_SET_NAME "{label}"' in h.read_text()
+            and f"#define RDP_NO_ROMS {int(no_roms)}" in h.read_text()):
+        return                                    # (made for this set already, with or without ROMs as asked)
     r = subprocess.run([sys.executable, str(SRC / "tools" / "pack_roms.py"), "--set", ROM_SET], cwd=SRC)
     if r.returncode:
         raise SystemExit("build: no ROMs, no RdPiano: see README.md (RDP_ROMS=/path/to/rdpiano/roms ./build.sh)")
