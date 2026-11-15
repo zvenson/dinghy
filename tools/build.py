@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 """Build Dinghy (on Felucca / SLOOP's platform): the app, the update loader and an installable .fwsc package.
 
-  tools/build.py [--set mks20a|mks20b|mk80] [--r3] [--release X.Y[-suffix]] [--board fm1|smk37] [--model pro|elite|mke]
+  tools/build.py [--set mks20a|mks20b|mk80] [--release X.Y[-suffix]] [--board fm1|smk37] [--model pro|elite|mke]
 
 Outputs in build/: rdpno.bin (app), loader/ota.bin (update loader),
 rdpno.fwsc (package). See README.md for the toolchain and the SDK.
@@ -184,15 +184,13 @@ def rom_header():
         raise SystemExit("build: no ROMs, no RdPiano: see README.md (RDP_ROMS=/path/to/rdpiano/roms ./build.sh)")
 
 
-# An experiment for speed (--r3; the app only, the update loader as before): -mcpu=r3, the AC79's own core as
-# JieLi's SDK builds for it (its FPU, -mfprev1, stays unused: the sound is integers). No -O2: with it (the whole
-# unity build, usb.c inside) USB-MIDI fails on the FM-1 and no updater reaches the unit any more (2026-11-15:
-# only the rescue or the boot ROM gets it back; Dinghy docs/API.md saw the same on 2026-10-13)
-APP_EXTRA = []
+# The app stays at -Os: with -O2 (the whole unity build, usb.c inside) USB-MIDI fails on the FM-1 and no updater
+# reaches the unit any more (2026-11-15: only the chip's download mode got it back; Dinghy docs/API.md saw the same
+# on 2026-10-13). -mcpu=r3 (the AC79's own core) was tried too: no gain.
 
 def build_app():
     rom_header()
-    flags = [*CFLAGS, *APP_EXTRA, *BOARD_DEFS[BOARD], "-Ifirmware/hal", "-Ifirmware/src", "-Ifirmware/gen", f'-DFELUCCA_ID="{PRODUCT}"',
+    flags = [*CFLAGS, *BOARD_DEFS[BOARD], "-Ifirmware/hal", "-Ifirmware/src", "-Ifirmware/gen", f'-DFELUCCA_ID="{PRODUCT}"',
              f'-DAPP_VER="{VERSION or "0.0"}"', f'-DAPP_NAME="{ROM_SETS[ROM_SET][1]}"']
     if BOARD == "smk37":
         if not re.fullmatch(r"[A-Z0-9]{1,7}", DATA_FAMILY):
@@ -325,7 +323,7 @@ def mmio_check():
 
 
 def main():
-    global PRODUCT, VERSION, BOARD, APP_SLOT, ROM_SET, APP_EXTRA
+    global PRODUCT, VERSION, BOARD, APP_SLOT, ROM_SET
     ap = argparse.ArgumentParser()
     ap.add_argument("--release", metavar="X.Y", help="release build: identity FM-1_99Y, version string X.Y")
     ap.add_argument("--board", choices=sorted(BOARD_PREFIX), default=None,
@@ -334,7 +332,6 @@ def main():
                     help="smk37: the model name, pro (default), elite or mke (default: $MODEL, else pro)")
     ap.add_argument("--set", choices=sorted(ROM_SETS), default=os.environ.get("RDP_SET", "mks20a"),
                     help="the ROM set: mks20a (the pianos, default), mks20b (harpsichord, clavi, vibraphone, e-pianos), mk80")
-    ap.add_argument("--r3", action="store_true", help="the app with -mcpu=r3 (experiment: speed)")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
     a = ap.parse_args()
     BOARD = (a.board or os.environ.get("BOARD") or "fm1").lower().replace("-", "")
@@ -347,9 +344,6 @@ def main():
     APP_SLOT = fm1pkg_make.APP_SLOT
     ROM_SET = a.set
     suffix = ROM_SETS[ROM_SET][2] + ("" if BOARD == "fm1" else "-" + BOARD)
-    if a.r3:
-        APP_EXTRA = ["-mcpu=r3"]
-        suffix += "-r3"
     if model != "pro":              # another model name: identity, loader and update record (fm1_cc.h SMK_MODEL)
         BOARD_DEFS[BOARD] = [*BOARD_DEFS[BOARD], f'-DSMK_MODEL="{MODELS[model]}"']
         BOARD_PREFIX[BOARD] = BOARD_PREFIX[BOARD].replace(MODELS["pro"], MODELS[model])
