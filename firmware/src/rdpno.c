@@ -8,9 +8,10 @@
  *   ALGORITHM  the MIDI receive channel: OMNI or 1..16      on every page
  *   SELECT     the page: HOME -> FX -> ENV; or HOME, FX, ENV themselves
  *   HOME       KNOB 1 voice level, 2 treble level, 3 bass level, 4 the keys' velocity (the FM-1 feels none)
- *   FX         KNOB 1 tremolo rate, 2 tremolo depth, 3 chorus rate, 4 chorus depth (depth 0 = off)
+ *   FX         KNOB 1 tremolo rate, 2 tremolo depth, 3 chorus rate, 4 chorus depth (depth 0 = off);
+ *              FX again: the chorus type, SPACE-D (rdpiano_juce's Space-D, spaced.c) or BBD (fx.c's own)
  *   ENV        KNOB 1 middle frequency, 2 middle level, 3 band width (the middle equalizer), 4 voices: how many
- *              the board plays (4..16; its own voice stealing among them; fewer = less load: rdp.c rdp_voices)
+ *              the board plays (4..10; its own voice stealing among them; fewer = less load: rdp.c rdp_voices)
  *   OCT- OCT+  the octave of the keys
  *   PLAY       the sustain pedal, latched (lit while it is down); CC 64 from MIDI works too
  *   MASTER     the volume (platform.c)
@@ -38,7 +39,18 @@ static volatile uint32_t load_now, load_peak;   /* the render's share of the 5.8
 volatile uint32_t rdp_load_max, rdp_parts_max;  /* the highest since boot (tools/emu_load.sh reads them) */
 volatile uint32_t rdp_quiet_min = 16;           /* the brake's deepest since boot (tools/emu_load.sh) */
 volatile uint32_t rdp_load_sum, rdp_load_n;     /* and the sum over the blocks from 1.5 s on, for a mean */
-static int32_t rs_prev, rs_cur;                 /* the board's last two samples */
+/* The overload exit: a render over its block for 0.2 s on end has the main loop starved, and the note-offs that
+ * would end it wait there (once the voices hang, it stays: up to switching off). Then ~60 ms of silence: the main
+ * loop releases every note and the pedal (rdp_panic_req), the board takes them after. */
+#define PANIC_BLOCKS 35u                        /* 35 blocks over 98 %: 0.2 s */
+#define PANIC_SILENT 10u                        /* 10 blocks of silence: 58 ms */
+static uint32_t panic_n;
+#ifndef DINGHY_HOST
+static uint32_t over_n;
+#endif
+static volatile uint32_t rdp_panic_req;
+volatile uint32_t rdp_panics;                   /* since boot (tools/emu_load.sh) */
+static int32_t rs_prev, rs_cur, rs_prevr, rs_curr;   /* the board's last two samples (after fx_board: two sides) */
 static uint32_t rs_frac;                        /* where between them, Q16 */
 
 static RDP_FAST void app_audio(int32_t *out, uint32_t n)
@@ -50,17 +62,21 @@ static RDP_FAST void app_audio(int32_t *out, uint32_t n)
     if (!rdp_ready) return;
     rdp_take();                                 /* a voice change: the render pauses until the main loop has done it */
     if (rdp_paused) return;
+    if (panic_n) { panic_n--; return; }         /* the overload exit: silence while the main loop releases */
     step = rdp_khz32 ? 47554u : 29721u;         /* 32000 or 20000 * 65536 / 44100 */
     for (i = 0; i < n; i++) {
-        int32_t s, l, r;
+        int32_t s, sr, l, r;
         while (rs_frac >= 65536u) {             /* the board's next sample */
             rs_frac -= 65536u;
             rs_prev = rs_cur;
-            rs_cur = rdp_render() >> 3;         /* +-2^17 or so -> Q15 with room for a full chord */
+            rs_prevr = rs_curr;
+            fx_board(rdp_render(), &rs_cur, &rs_curr);   /* Q15; Space-D here, at the board's rate */
         }
         s = rs_prev + (int32_t)(((int64_t)(rs_cur - rs_prev) * (int32_t)rs_frac) >> 16);
+        sr = rs_curr == rs_cur && rs_prevr == rs_prev ? s :
+             rs_prevr + (int32_t)(((int64_t)(rs_curr - rs_prevr) * (int32_t)rs_frac) >> 16);
         rs_frac += step;
-        fx_process(s, &l, &r);
+        fx_process(s, sr, &l, &r);
         out[2u * i] += l;
         out[2u * i + 1u] += r;
     }
@@ -72,6 +88,13 @@ static RDP_FAST void app_audio(int32_t *out, uint32_t n)
     if (fm1_ms > 1500u) { rdp_load_sum += load_now; rdp_load_n++; }
     if (rdp_active > rdp_parts_max) rdp_parts_max = rdp_active;
     rdp_brake(load_now);                        /* too much: the faintest parts drop out for a while */
+    if (load_now < 980u) over_n = 0;
+    else if (++over_n >= PANIC_BLOCKS) {
+        over_n = 0;
+        panic_n = PANIC_SILENT;
+        rdp_panic_req = 1;
+        rdp_panics++;
+    }
     if (rdp_quiet < rdp_quiet_min && fm1_ms > 1500u) rdp_quiet_min = rdp_quiet;
 #endif
 }
@@ -86,6 +109,7 @@ static void set_defaults(void)
     set.patch = 0; set.ch = 0; set.vel = 100; set.oct = 0; set.page = 0; set.voices = 8;
     set.fx.vol = 15; set.fx.bass = FX_LEVEL0; set.fx.treble = FX_LEVEL0; set.fx.mid_level = FX_LEVEL0; set.fx.mid_freq = 3;
     set.fx.width = 3; set.fx.cho_rate = 8; set.fx.cho_depth = 0; set.fx.trm_rate = 8; set.fx.trm_depth = 0;
+    set.fx.cho_type = FX_SPACED;
 }
 static int set_ok(void)
 {
@@ -93,29 +117,39 @@ static int set_ok(void)
     return set.patch < RDP_NPATCH && set.ch <= 16u && set.vel && set.vel <= 127u && (int8_t)set.oct >= -2 &&
            (int8_t)set.oct <= 2 && set.page < 3u && set.voices >= 4u && set.voices <= 16u && f->vol <= 15u && f->bass < FX_NLEVEL && f->treble < FX_NLEVEL &&
            f->mid_level < FX_NLEVEL && f->mid_freq < FX_NMIDF && f->width < FX_NWIDTH && f->cho_rate &&
-           f->cho_rate <= 15u && f->cho_depth <= 15u && f->trm_rate && f->trm_rate <= 15u && f->trm_depth <= 15u;
+           f->cho_rate <= 15u && f->cho_depth <= 15u && f->trm_rate && f->trm_rate <= 15u && f->trm_depth <= 15u &&
+           f->cho_type <= FX_SPACED;
 }
 
 #define KEY0 53u                                /* key 0 = F3 */
+/* At most 10 voices: with the pedal down every key struck keeps one, and 12 (~110 parts) are more than the FM-1
+ * computes in time (distortion, and MIDI waits). 8 by default. */
+#define RDP_VOICES_MAX 10u
 static uint32_t sustain;
 /* Everything for the board goes through a queue, in order, and a note-on leaves it no sooner than STAGGER_MS
  * after the one before: keys struck together start a few ms apart, so their loud attacks (the board's busiest
  * moments, and all the parts at full level) do not all land in one audio block. 6 keys: 15 ms from first to last. */
 #define STAGGER_MS 3u
-static struct { uint8_t st, d1, d2; } evq[64];
+#define EVQ 128u
+static struct { uint8_t st, d1, d2; } evq[EVQ];
 static uint32_t evq_w, evq_r, ev_last_on, ev_any_on;
-static void ev_push(uint32_t st, uint32_t d1, uint32_t d2)
+/* A note-off or the pedal is never lost: when the queue is full it waits as a bit (ev_rel, ev_ped) and goes
+ * after the queue; a note-on that does not fit is dropped (and counted). ev_held: the notes on, as sent. */
+static uint32_t ev_held[4], ev_rel[4], ev_ped, ev_drops;
+static int ev_push(uint32_t st, uint32_t d1, uint32_t d2)
 {
-    if (evq_w - evq_r >= 64u) return;           /* (full: a burst no one plays; dropped) */
-    evq[evq_w & 63u].st = (uint8_t)st;
-    evq[evq_w & 63u].d1 = (uint8_t)d1;
-    evq[evq_w & 63u].d2 = (uint8_t)d2;
+    if (evq_w - evq_r >= EVQ) return 0;
+    evq[evq_w % EVQ].st = (uint8_t)st;
+    evq[evq_w % EVQ].d1 = (uint8_t)d1;
+    evq[evq_w % EVQ].d2 = (uint8_t)d2;
     evq_w++;
+    return 1;
 }
 static void ev_pump(void)                       /* main loop: what may go to the board now */
 {
+    uint32_t i;
     while (evq_r != evq_w) {
-        uint32_t st = evq[evq_r & 63u].st, d1 = evq[evq_r & 63u].d1, d2 = evq[evq_r & 63u].d2;
+        uint32_t st = evq[evq_r % EVQ].st, d1 = evq[evq_r % EVQ].d1, d2 = evq[evq_r % EVQ].d2;
         uint32_t on = st == 0x90u && d2;
         if (on && ev_any_on && fm1_ms - ev_last_on < STAGGER_MS) return;
         if (!rdp_room(3)) return;               /* (the board's own queue is full: next time) */
@@ -123,16 +157,57 @@ static void ev_pump(void)                       /* main loop: what may go to the
         if (on) { ev_last_on = fm1_ms; ev_any_on = 1; }
         evq_r++;
     }
+    for (i = 0; i < 128u; i++)                  /* the note-offs that did not fit, after it */
+        if (ev_rel[i >> 5] & 1u << (i & 31u)) {
+            if (!rdp_room(3)) return;
+            rdp_midi(0x80, i, 0);
+            ev_rel[i >> 5] &= ~(1u << (i & 31u));
+        }
+    if (ev_ped) {
+        if (!rdp_room(3)) return;
+        rdp_midi(0xB0, 64, ev_ped == 2u ? 127u : 0u);
+        ev_ped = 0;
+    }
 }
-static void note_on(uint32_t note, uint32_t vel) { ev_push(0x90, note, vel); }
-static void note_off(uint32_t note) { ev_push(0x80, note, 0); }
-static void pedal(uint32_t on) { sustain = on; ev_push(0xB0, 64, on ? 127u : 0u); }
+static void note_on(uint32_t note, uint32_t vel)
+{
+    note &= 127u;
+    ev_rel[note >> 5] &= ~(1u << (note & 31u));   /* (a release still waiting is overtaken: the key is down again) */
+    if (ev_push(0x90, note, vel)) ev_held[note >> 5] |= 1u << (note & 31u);
+    else ev_drops++;
+}
+static void note_off(uint32_t note)
+{
+    note &= 127u;
+    ev_held[note >> 5] &= ~(1u << (note & 31u));
+    if (!ev_push(0x80, note, 0)) ev_rel[note >> 5] |= 1u << (note & 31u);
+}
+static void pedal(uint32_t on)
+{
+    sustain = on;
+    if (!ev_push(0xB0, 64, on ? 127u : 0u)) ev_ped = on ? 2u : 1u;
+}
+static void release_all(void)                   /* CC 120 / 123, or MIDI in lost something: every note off */
+{
+    uint32_t i;
+    for (i = 0; i < 128u; i++)
+        if (ev_held[i >> 5] & 1u << (i & 31u)) note_off(i);
+}
+static uint32_t midi_lost(void)                 /* messages lost on the way in, since the start */
+{
+#if FELUCCA_UART
+    return um.drops + um.resync + ev_drops;
+#else
+    return ev_drops;
+#endif
+}
 
 /* ---- the pages: four knob rows each */
 enum { PG_HOME, PG_FX, PG_ENV, PG_N };
 enum { V_VOL, V_TREBLE, V_BASS, V_VEL, V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH, V_MFREQ, V_MLEVEL, V_WIDTH, V_VOICES,
        V_NONE };
 static const char *const PAGE_NAME[PG_N] = {"HOME", "FX: TREMOLO / CHORUS", "ENV: MIDDLE EQ"};
+static const char *const CHO_NAME[2] = {"FX: TREMOLO / BBD CHORUS", "FX: TREMOLO / SPACE-D"};   /* (FX again) */
 static const uint8_t PAGE_ROW[PG_N][4] = {
     {V_VOL, V_TREBLE, V_BASS, V_VEL}, {V_TRATE, V_TDEPTH, V_CRATE, V_CDEPTH}, {V_MFREQ, V_MLEVEL, V_WIDTH, V_VOICES}};
 static const char *const VAL_NAME[V_NONE] = {"VOICE LEVEL", "TREBLE LEVEL", "BASS LEVEL", "KEY VELOCITY",
@@ -160,7 +235,7 @@ static void val_turn(uint32_t v, int32_t e)     /* a knob turned e detents */
 {
     static const uint8_t LO[V_NONE] = {0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 4};
     static const uint8_t HI[V_NONE] = {15, FX_NLEVEL - 1u, FX_NLEVEL - 1u, 127, 15, 15, 15, 15, FX_NMIDF - 1u, FX_NLEVEL - 1u,
-                                       FX_NWIDTH - 1u, 16};
+                                       FX_NWIDTH - 1u, RDP_VOICES_MAX};
     uint8_t *p = val_ptr(v);
     int32_t x = (int32_t)*p + (v == V_VEL ? 4 * e : e);
     *p = (uint8_t)(x < LO[v] ? LO[v] : x > HI[v] ? HI[v] : x);
@@ -212,7 +287,7 @@ static void draw_voice(void)
 }
 static void draw_page(uint32_t page)
 {
-    draw_text_box(0, 56, 240, &FONT_S, PAGE_NAME[page], C_LED, 1);
+    draw_text_box(0, 56, 240, &FONT_S, page == PG_FX ? CHO_NAME[set.fx.cho_type & 1u] : PAGE_NAME[page], C_LED, 1);
 }
 static void draw_row(uint32_t i, uint32_t v, int hot)
 {
@@ -230,13 +305,14 @@ static void draw_row(uint32_t i, uint32_t v, int hot)
     val_text(v, s);
     draw_text_box(158, ROW_Y(i), 74, &FONT_S, s, hot ? C_WHITE : C_ACC, 2);
 }
-static void draw_midi(int32_t oct, uint32_t ch, uint32_t sus)
+static void draw_midi(int32_t oct, uint32_t ch, uint32_t sus, uint32_t lost)
 {
     char s[40], *p = s;
     p = put(p, "MIDI RX-CH "); if (ch) p = put_u(p, ch); else p = put(p, "OMNI");
     p = put(p, "  OCT "); *p++ = oct < 0 ? '-' : '+'; *p++ = (char)('0' + (oct < 0 ? -oct : oct));
     if (sus) p = put(p, "  SUS");
-    p = put(p, cpu1_on() ? "  2 CORES" : "  1 CORE");
+    if (lost) { p = put(p, "  E"); p = put_u(p, lost > 99u ? 99u : lost); }   /* MIDI in lost messages */
+    else p = put(p, cpu1_on() ? "  2 CORES" : "  1 CORE");
     *p = 0;
     draw_text_box(0, 186, 240, &FONT_S, s, C_OFF, 1);
 }
@@ -268,6 +344,7 @@ static void midi_in(void)
         if (ty == 0x90u && d2) note_on(d1, d2);
         else if (ty == 0x80u || ty == 0x90u) note_off(d1);
         else if (ty == 0xB0u && d1 == 64u) pedal(d2 >= 64u);
+        else if (ty == 0xB0u && (d1 == 120u || d1 == 123u)) release_all();   /* all sound / all notes off */
         else if (ty == 0xC0u) want_patch = d1 % RDP_NPATCH;
     }
 }
@@ -283,14 +360,17 @@ static void app_main(void)
     uint32_t prev = 0, k, t_change = 0, dirty = 0, t_load = 0, hold = 0, t_hold = 0, hot = V_NONE;
     uint32_t page_drawn = ~0u, patch_drawn = ~0u, midi_drawn = ~0u, load_drawn = ~0u, rows_drawn[4], leds_set = ~0u;
     uint8_t held[27] = {0};
+    uint32_t lost_seen = 0;
 #if BOARD_SMK37
     uint8_t ext_note[FM1_NKEY] = {0};
     smk_pad_events = 1;                         /* the pads as events: taken and dropped (no use for them yet) */
 #endif
     for (k = 0; k < 4u; k++) rows_drawn[k] = ~0u;
     if (settings_load(&set, sizeof set) || !set_ok()) set_defaults();
+    if (set.voices > RDP_VOICES_MAX) set.voices = RDP_VOICES_MAX;
     fx_set(&set.fx);
     rdp_voices = set.voices;
+    rdp_side = fx_side;                         /* Space-D on the second core, beside the board's CPU */
 
     lcd_fill(0, 0, 240, 240, C_BLACK);
     draw_text_box(0, 100, 240, &FONT_S, APP_NAME "  v" APP_VER, C_ACC, 1);
@@ -337,6 +417,10 @@ static void app_main(void)
         if (b & (1u << BTN_PLAY)) { pedal(!sustain); midi_send(0xB0u | out_ch, 64, sustain ? 127u : 0u); }
         for (k = 0; k < PG_N; k++)
             if (b & (1u << PAGE_BTN[k]) && set.page != k) { set.page = (uint8_t)k; hot = V_NONE; dirty = 1; t_change = fm1_ms; }
+            else if (b & (1u << PAGE_BTN[k]) && k == PG_FX) {   /* FX on the FX page: the other chorus */
+                set.fx.cho_type ^= 1u;
+                fx_dirty = 1; dirty = 1; t_change = fm1_ms;
+            }
         if ((e = fm1_enc_take(ENC_SELECT)) != 0) {
             int32_t pg = ((int32_t)set.page + e) % (int32_t)PG_N;
             set.page = (uint8_t)(pg < 0 ? pg + (int32_t)PG_N : pg);
@@ -383,8 +467,8 @@ static void app_main(void)
 
         idle_ok = 1;                            /* the drawing below may read MIDI meanwhile (LCD_IDLE) */
         if (set.patch != patch_drawn) { patch_drawn = set.patch; draw_voice(); }
-        if (set.page != page_drawn) {
-            page_drawn = set.page;
+        if ((set.page | (uint32_t)set.fx.cho_type << 4) != page_drawn) {
+            page_drawn = set.page | (uint32_t)set.fx.cho_type << 4;
             draw_page(set.page);
             for (k = 0; k < 4u; k++) rows_drawn[k] = ~0u;
         }
@@ -393,9 +477,22 @@ static void app_main(void)
             st = v == V_NONE ? 0xFFFFu : (uint32_t)*val_ptr(v) | v << 8 | (uint32_t)(v == hot) << 12;
             if (st != rows_drawn[k]) { rows_drawn[k] = st; draw_row(k, v, v == hot); }
         }
-        if ((st = (uint32_t)(oct + 2) | set.ch << 4 | sustain << 9 | (uint32_t)cpu1_on() << 10) != midi_drawn) {
+        if (rdp_panic_req) {                    /* the overload exit (app_audio): every note and the pedal off */
+            rdp_panic_req = 0;
+            release_all();
+            pedal(0);
+        }
+        if (midi_lost() != lost_seen) {         /* a note-off may have been among them: everything off */
+            uint32_t was = sustain;
+            lost_seen = midi_lost();
+            release_all();
+            pedal(0);                           /* (the pedal's release may have been lost too: up, and down */
+            if (was) pedal(1);                  /* again as it was last heard) */
+        }
+        if ((st = (uint32_t)(oct + 2) | set.ch << 4 | sustain << 9 | (uint32_t)cpu1_on() << 10 |
+                  (lost_seen > 99u ? 99u : lost_seen) << 11) != midi_drawn) {
             midi_drawn = st;
-            draw_midi(oct, set.ch, sustain);
+            draw_midi(oct, set.ch, sustain, lost_seen);
         }
         if (fm1_ms - t_load >= 250u) {          /* the load four times a second, and the highest of the last 2 s */
             uint32_t now = load_now, pk = load_peak, parts = rdp_active;

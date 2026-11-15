@@ -359,10 +359,12 @@ static volatile u32 rdp_voices = 16;
 /* The overload brake (RDPNO): app_audio tells rdp_brake each block (5.8 ms) how much of it the render took, in
  * 1/1000. Over 90 %, it leaves out one octave more of the faintest parts (rdp_quiet 10 -> 9 -> 8 -> 7: at 7 a part
  * left out gives at most +-64 of the board's +-2^17, -66 dB) and holds that for half a second; under 70 % it
- * takes one back every 100 ms. Only what is heard changes: every part's envelope and phase go on (sa_half), the
- * board never notices. rdp_quiet above 10 (the tests' 16) is left alone. */
+ * takes one back every 100 ms. At 100 % and over it goes on down to 4 (-48 dB): the decays thin out, but the
+ * sound goes on. Only what is heard changes: every part's envelope and phase go on (sa_half), the board never
+ * notices. rdp_quiet above 10 (the tests' 16) is left alone. */
 #define RDP_QUIET_TOP  10u
 #define RDP_QUIET_LOW  7u
+#define RDP_QUIET_FLOOR 4u
 static u32 rdp_brake_hold;
 
 static RDP_FAST void rdp_brake(u32 load)
@@ -370,7 +372,7 @@ static RDP_FAST void rdp_brake(u32 load)
     u32 q = rdp_quiet;
     if (q > RDP_QUIET_TOP) return;
     if (load >= 900u) {
-        if (q > RDP_QUIET_LOW) rdp_quiet = q - 1u;
+        if (q > (load >= 1000u ? RDP_QUIET_FLOOR : RDP_QUIET_LOW)) rdp_quiet = q - 1u;
         rdp_brake_hold = 86u;
     } else if (rdp_brake_hold) {
         rdp_brake_hold--;
@@ -3371,10 +3373,17 @@ out:
 #undef RDP_STEP
 }
 
+/* rdp_side (RDPNO: fx.c's Space-D): more work on each sample, which the second core does while the first runs
+ * the board's CPU below (the two touch nothing of each other's); with one core, the first does it here */
+static void (*rdp_side)(s32 s);
+static RDP_FAST void rdp_side_job(uint32_t s) { rdp_side((s32)s); }
+
 static RDP_FAST s32 rdp_render(void)                     /* one sample; the audio interrupt */
 {
     s32 s = sa_update();
+    u32 side = 0;
     if (rdp_ram[0x93] > rdp_voices && !rdp_ram[0x92]) rdp_ram[0x93] = (u8)rdp_voices;   /* (see rdp_voices) */
+    if (rdp_side && !(side = rdp_split_on && RDP_SPLIT_RUN(rdp_side_job, (uint32_t)s))) rdp_side(s);
     int n = rdp_khz32 ? 62 : 100;
     if (rdp_exact) {
         m_icount += n;                          /* what the last instruction overran is owed */
@@ -3391,6 +3400,7 @@ static RDP_FAST s32 rdp_render(void)                     /* one sample; the audi
         for (i = 0; i < n; i++) mcu_run_one();
         m_icount = 0;
     }
+    if (side) (void)RDP_SPLIT_WAIT();           /* (given up: one core from now on, rdp_side here then) */
     return s;
 }
 

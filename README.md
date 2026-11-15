@@ -24,9 +24,10 @@ At first a single note took most of the time. What brought it to eight:
 | **Only what sounds** | The sound chip visits only the parts that sound (a mask per voice, and one over the voices), and parts more than ~60 dB down are not read from the wave ROM at all: their envelopes and phases go on, so the board sees no difference. |
 | **The common case, straight** | Nearly every sounding voice has the same two flags; for it the part loop has its own version, without the general case's mask arithmetic. Envelope and phase steps are worked out when the board writes them, not every sample. |
 | **The board's idle loop natively** | 94 % of the board's instructions are its scan over the voices and the main loop around it. These run as C code with the same registers, flags, RAM and cycles, instead of through the interpreter; other instructions skip the interpreter's interrupt checks while none could be taken. |
+| **Space-D beside the board's CPU** | The chorus is computed by the second core while the first runs the board's CPU, so it costs next to nothing. |
 | **Code and data in RAM** | The hot code (the `.fast` section), the board's program and the most used wave ROM pages are copied to RAM: the 32 KB flash cache would otherwise thrash. |
 | **No bursts** | Notes go to the board at least 3 ms apart, the screen and LEDs redraw only what changed. |
-| **Voices and the brake** | ENV, knob 4 sets how many voices the board uses (4..16): it steals among them by its own rule. Over 90 % load an overload brake leaves out the faintest parts for a while (`*` after PARTS on the screen) and puts them back under 70 %. |
+| **Voices and the brake** | ENV, knob 4 sets how many voices the board uses (4..10, 8 by default; with the pedal down every key struck keeps one): it steals among them by its own rule. Over 90 % load an overload brake leaves out the faintest parts for a while (`*` after PARTS on the screen; at 100 % and over down to -48 dB) and puts them back under 70 %. Should the load stay over its time for 0.2 s anyway, the sound stops for ~60 ms and every note and the pedal are released: the main loop, which carries the note-offs, would otherwise starve, and the voices hang. |
 
 The result does not change the sound: every step was checked sample for sample against the plain emulation.
 Load on Joakim Eriksson's [FM-1 emulator](https://github.com/joakimeriksson/fm1-emu) (strict mode, 240 MHz; the
@@ -45,17 +46,25 @@ values (the last one turned in white), MIDI and the CPU load.
 | | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
 | --- | --- | --- | --- | --- |
 | **HOME** | voice level 0..15 | treble level (10 kHz) | bass level (100 Hz) | the keys' velocity |
-| **FX** | tremolo rate 1..15 | tremolo depth (0 = off) | chorus rate 1..15 | chorus depth (0 = off) |
-| **ENV** | middle frequency 400 Hz..4 kHz (8 steps, as the MKS-20) | middle level | band width 1..8 (higher = narrower) | voices 4..16 (the board's own voice stealing among them) |
+| **FX** | tremolo rate 1..15 | tremolo depth (0 = off; 1.5 dB a step, 15: full) | chorus rate 1..15 | chorus depth (0 = off) |
+
+**FX** pressed again on the FX page switches the chorus: **SPACE-D** (the default) or **BBD**; the page's title says
+which.
+| **ENV** | middle frequency 400 Hz..4 kHz (8 steps, as the MKS-20) | middle level | band width 1..8 (higher = narrower) | voices 4..10, 8 by default (the board's own voice stealing among them) |
 
 On every page: **PRESETS** the voice, **ALGORITHM** the MIDI receive channel (OMNI, 1..16), **OCT- / OCT+** the
 octave, **PLAY** the sustain pedal (latched), **MASTER** the volume. Levels go -10.5..+10.5 dB in 1.5 dB steps, as on
-the MKS-20. MIDI in: notes with velocity, CC 64, program change (the voice); the keys go out on USB-MIDI.
+the MKS-20. MIDI in: notes with velocity, CC 64, CC 120 / 123 (all notes off), program change (the voice); the keys go out
+on USB-MIDI. On the DIN/TRS input aftertouch, pitch bend, the other controllers and clock are dropped at once (a
+keyboard's aftertouch stream would fill the queue); a note-off or the pedal is never dropped on the way to the
+board; if a message is lost anyway, every note is released and the MIDI line shows `E` and the count.
 Everything but the pedal is kept in flash. The settings are global, not per voice (the MKS-20 keeps them per tone).
 
-The board gives 16 voices; the equalizer (Simper SVFs), the chorus (a modulated delay, the two sides in
-antiphase) and the stereo tremolo are new integer approximations in `fx.c`, not emulations of the MKS-20's
-analog circuits.
+The board gives 16 voices. The SPACE-D chorus is rdpiano_juce's Space-D (`spaced.c`): a Roland LSP effect
+program, Roland's digital Dimension-D-style chorus, two delay lines swung in antiphase by a triangle and crossed to
+the two sides; it runs at the board's rate, right after it, sample for sample as rdpiano_juce's (checked on the
+computer). The equalizer (Simper SVFs), the BBD chorus (a modulated delay, the two sides in antiphase) and the
+stereo tremolo are new integer approximations in `fx.c`, not emulations of the MKS-20's analog circuits.
 
 ## The ROMs
 
@@ -85,7 +94,8 @@ pip3 install Pillow
 tools/get_toolchain.sh
 git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 \
     https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git ~/fw-AC79_AIoT_SDK
-./build.sh                                    # -> build/rdpno.fwsc
+./build.sh                                    # -> build/rdpno.fwsc (the pianos)
+./build.sh --set mks20b                       # -> build/rdpno-b.fwsc: RDPNO-B, harpsichord, clavi, vibraphone, e-pianos
 python3 tools/fm1_install.py build/rdpno.fwsc # over USB
 ```
 
@@ -119,7 +129,8 @@ Back to another firmware: the [FM-1 Firmware Hub](https://thefirmwarehub.com), o
 | --- | --- |
 | `firmware/src/rdp.c` | the board: librdpiano's `Mcu` (MAME's HD6301) and `SoundChip`, in C, no heap, no float. The ROM tables live in flash (3 bytes a wave address), the parameter ROM's 32 KB window of the patch is unpacked (LZ4) into the pool, the exponential tables are folded to 10 KB (`rdp_tables.h`), and the sound chip only visits the parts that sound |
 | `firmware/src/rdpno.c` | the app: keys, MIDI, the panel (HOME / FX / ENV), the screen; the board's 20/32 kHz resampled to 44.1 kHz |
-| `firmware/src/fx.c`, `fx_tables.h` | voice level, bass/middle/treble EQ, chorus, tremolo at 44.1 kHz; the constants from `tools/gen_fx_tables.py` |
+| `firmware/src/fx.c`, `fx_tables.h` | voice level, bass/middle/treble EQ, BBD chorus, tremolo at 44.1 kHz; the constants from `tools/gen_fx_tables.py` |
+| `firmware/src/spaced.c` | the Space-D chorus after rdpiano_juce (Giulio Zausa), at the board's rate |
 | `tools/pack_roms.py` | the ROMs, descrambled as librdpiano does it, into `firmware/gen/rdp_rom.h` |
 | `tests/rdp_test.c`, `rdp_ref.cpp`, `rdp_script.h`, `rdp_compare.sh` | the same script on the port and on librdpiano |
 | everything else | Dinghy's platform: updates, USB rescue, USB-MIDI/audio, panel, screen, storage, the SMK-37 |
