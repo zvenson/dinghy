@@ -46,7 +46,7 @@ values (the last one turned in white), MIDI and the CPU load.
 | | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
 | --- | --- | --- | --- | --- |
 | **HOME** | voice level 0..15 | treble level (10 kHz) | bass level (100 Hz) | the keys' velocity |
-| **FX** | tremolo rate 1..15 | tremolo depth (0 = off) | chorus rate 1..15 | chorus depth (0 = off) |
+| **FX** | tremolo rate 1..15 | tremolo depth (0 = off; 1.5 dB a step, 15: full) | chorus rate 1..15 | chorus depth (0 = off) |
 
 **FX** pressed again on the FX page switches the chorus: **SPACE-D** (the default) or **BBD**; the page's title says
 which.

@@ -77,7 +77,7 @@ static void fx_set(const fx_par_t *p)
     c->sd_rate = SD_RATE[(p->cho_rate ? p->cho_rate : 1u) - 1u];
     c->sd_depth = SD_DEPTH[p->cho_depth & 15u];
     c->trm_inc = FX_TRM_INC[(p->trm_rate ? p->trm_rate : 1u) - 1u];
-    c->trm_depth = (uint32_t)(p->trm_depth & 15u) * 32767u / 15u;
+    c->trm_depth = FX_TRM_DEPTH[p->trm_depth & 15u];   /* 1.5 dB a step (fx_tables.h) */
     fx_cur ^= 1u;                               /* (a 32-bit store: the render sees the old set or the new) */
 }
 
@@ -135,8 +135,9 @@ static RDP_FAST void fx_board(int32_t s, int32_t *l, int32_t *r)
     sd_rate = c->sd_rate;
     sd_depth = c->sd_depth;
     if (c->sd_on && fx_sd_go) {
-        *l = ((fx_sd_l >> 8) * 5) >> 3;         /* >> 6, then >> 2 to Q15 as below, and -4 dB: as loud as dry */
-        *r = ((fx_sd_r >> 8) * 5) >> 3;
+        *l = ((fx_sd_l >> 8) * 7) >> 4;         /* >> 6, then >> 2 to Q15 as below, and -7 dB: its sides peak
+                                                 * higher than dry (hard chords clipped on the FM-1 at -4 dB) */
+        *r = ((fx_sd_r >> 8) * 7) >> 4;
         return;
     }
     if (c->sd_on) {                             /* switched on: its lines empty, from the next sample on */

@@ -51,6 +51,8 @@ arr("FX_VOL","uint16_t",[0]+[int(round(4096*10**((l-15)*2/20))) for l in range(1
 arr("FX_CHO_INC","uint32_t",[int(round((1000.0/p)*2**32/FS)) for p in [2700,1380,910,680,540,450,385,335,300,265,245,220,205,190,175]],5),
 "/* tremolo rate 1..15: 0.5 .. 7.5 Hz (as rdpiano_juce: rate x 0.5 Hz), phase step per sample */",
 arr("FX_TRM_INC","uint32_t",[int(round((0.5*r)*2**32/FS)) for r in range(1,16)],5),
+"/* tremolo depth 0..15 -> Q15 of the swing: each side dips by 1.5 dB a step (1: 1.5 dB .. 14: 21 dB), 15: to silence */",
+arr("FX_TRM_DEPTH","uint16_t",[0]+[int(round(32767*(1-10**(-1.5*k/20)))) for k in range(1,15)]+[32767],8),
 ]
 open(Path(__file__).resolve().parents[1] / 'firmware/src/fx_tables.h','w').write("\n".join(out)+"\n")
 print("fx_tables.h written")

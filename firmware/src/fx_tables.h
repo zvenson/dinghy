@@ -84,3 +84,8 @@ static const uint32_t FX_TRM_INC[15] = {
     292175, 340870, 389566, 438262, 486958,
     535654, 584349, 633045, 681741, 730437,
 };
+/* tremolo depth 0..15 -> Q15 of the swing: each side dips by 1.5 dB a step (1: 1.5 dB .. 14: 21 dB), 15: to silence */
+static const uint16_t FX_TRM_DEPTH[16] = {
+    0, 5197, 9570, 13249, 16345, 18949, 21141, 22985,
+    24536, 25842, 26940, 27864, 28642, 29296, 29847, 32767,
+};
