@@ -1,4 +1,4 @@
-# RDPNO
+# RDPNO (experimental)
 
 **Roland's SA pianos (MKS-20; also the Rhodes MK-80) on the M-VAVE FM-1: [rdpiano](https://github.com/giulioz/rdpiano)'s
 emulation of the CPU-B board, ported to the FM-1 on [Dinghy](https://github.com/zvenson/dinghy).**
@@ -7,7 +7,7 @@ rdpiano emulates the board these pianos share: the HD6301 CPU running Roland's p
 from silicon analysis. RDPNO runs that emulation inside the FM-1's audio interrupt, reading the ROMs straight
 from flash, and plays it from the keys and MIDI.
 
-> **Status: v0.1, plays on the FM-1** (old and new flash chip), in three builds: **RDPNO** (MKS-20 voices 1-3, the
+> **Status: v0.1, experimental. Plays on the FM-1** (old and new flash chip), in three builds: **RDPNO** (MKS-20 voices 1-3, the
 > pianos), **RDPNO-B** (MKS-20 voices 4-8: harpsichord, clavi, vibraphone, e-piano 1 and 2) and **RDPNO-80** (the
 > Rhodes MK-80's eight tones). The emulation gives librdpiano's samples bit for bit (`tests/rdp_compare.sh`), on
 > one core or split over two.
@@ -54,12 +54,18 @@ values (the last one turned in white), MIDI and the CPU load.
 
 | | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
 | --- | --- | --- | --- | --- |
-| **HOME** | voice level 0..15 | treble level (10 kHz) | bass level (100 Hz) | the keys' velocity |
+| **HOME** | voice level 0..15 | treble level (shelf, 4 kHz) | bass level (shelf, 200 Hz) | the keys' velocity |
 | **FX** | tremolo rate 1..15 | tremolo depth (0 = off; 1.5 dB a step, 15: full) | chorus rate 1..15 | chorus depth (0 = off) |
 | **ENV** | middle frequency 400 Hz..4 kHz (8 steps, as the MKS-20) | middle level | band width 1..8 (higher = narrower) | voices 4..10, 8 by default (the board's own voice stealing among them) |
 
 **FX** pressed again on the FX page switches the chorus: **SPACE-D** (the default) or **BBD**; the page's title says
 which. The tremolo is a stereo one, as rdpiano's: the two sides swing in antiphase.
+
+**The equalizer:** bass and treble are shelving filters, gentle ones (Q 0.5) with their corner (half the gain) at
+**200 Hz** and **4 kHz**: they reach nearly their full level at 100 Hz and 10 kHz, the MKS-20's own frequencies.
+Shelves at 100 Hz and 10 kHz themselves did next to nothing here: the board's sound ends at 10 kHz (it samples at
+20 kHz), and a piano has little at 100 Hz. The middle is a peak filter at 400, 560, 770 Hz, 1, 1.4, 2, 2.8 or 4 kHz,
+its width 1..8 (Q 0.35..4). All three -10.5..+10.5 dB in 1.5 dB steps (`tools/gen_fx_tables.py`).
 
 On every page: **PRESETS** the voice, **ALGORITHM** the MIDI receive channel (OMNI, 1..16), **OCT- / OCT+** the
 octave, **PLAY** the sustain pedal (latched), **MASTER** the volume. Levels go -10.5..+10.5 dB in 1.5 dB steps, as on
