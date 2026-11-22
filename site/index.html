@@ -1,0 +1,38 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     RDPNO for the FM-1: the front page ({{VERSION}}, {{PKG}}: tools/make_site.py). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RDPNO · Roland's SA pianos on the M-VAVE FM-1</title>
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<main>
+  <h1>RDPNO <span class="small">{{VERSION}} · experimental</span></h1>
+  <p>Roland's SA pianos on the M-VAVE FM-1: the MKS-20's pianos and e-pianos and the Rhodes MK-80, played by an
+    emulation of their CPU-B board (its CPU and the SA sound chip, cycle for cycle), after
+    <a href="https://github.com/giulioz/rdpiano">rdpiano</a> by Giulio Zausa. With the MKS-20's equalizer, chorus
+    (Space-D or BBD) and tremolo, up to 8 notes at once over both of the FM-1's cores.</p>
+  <p>The sounds are Roland's ROMs, and they are <b>not</b> part of RDPNO: you load your own dumps into the FM-1 from
+    this site. One set at a time: <b>MKS-20 A</b> (Piano 1–3), <b>MKS-20 B</b> (Harpsichord, Clavi, Vibraphone,
+    E-Piano 1, 2) or <b>MK-80</b> (8 tones).</p>
+  <div class="big">
+    <a href="install/"><b>1 · Install</b>RDPNO onto the FM-1 over USB, and your ROMs with it.</a>
+    <a href="load/"><b>2 · Load the ROMs</b>another set, or again after something went wrong.</a>
+    <a href="screens/"><b>The screens</b>what HOME, FX and ENV show and do.</a>
+  </div>
+  <p class="small">Chrome or Edge (Web MIDI), the FM-1 connected by USB. Back to M-VAVE's firmware at any time: the
+    installer's "Back to the stock firmware", or M-VAVE's own updater. Installing firmware is at your own risk; if the
+    FM-1 no longer starts, hold <b>OCT-</b> while switching it on (the USB rescue).</p>
+  <p class="small">The firmware file itself: <a href="firmware/{{PKG}}">{{PKG}}</a> (no Roland data in it). Source,
+    and how to build it yourself: <a href="https://github.com/R-Jeb/rdpno-fm1">github.com/R-Jeb/rdpno-fm1</a>.</p>
+</main>
+<footer>
+  <p class="small">RDPNO is free software (GPL-3.0), on Dinghy by zvenson, from Felucca by Leo Kuroshita (Hügelton
+    Instruments). No Roland data is on this site. Roland, MKS-20, Rhodes and MK-80 are trademarks of their owners,
+    M-VAVE and FM-1 of theirs. Not made or endorsed by any of them.</p>
+</footer>
+</body>
+</html>

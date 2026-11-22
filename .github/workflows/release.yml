@@ -1,7 +1,8 @@
 # RDPNO's check on GitHub: does it build, do the host tests pass. WITHOUT Roland's ROMs: they never go to GitHub
 # (tools/pack_roms.py --no-roms makes blank ROMs of the right sizes; the firmware built so only says "NO ROMS: BUILD
-# IT YOURSELF"). Nothing is uploaded: whoever wants RDPNO builds it with the ROMs on their own computer
-# (tools/setup.sh, README.md "Build it yourself"). Runs on every push and pull request, and by hand.
+# IT YOURSELF"). Uploaded is only the site with the ROM-free firmware (--romload: it takes the player's own ROMs from
+# the load page; no Roland data in it), as an artifact to look at; pages.yml publishes it. Runs on every push and
+# pull request, and by hand.
 # The JieLi toolchain comes from pkgman.jieliapp.com (tools/get_toolchain.sh), the AC79 SDK from gitee.com, as in
 # Dinghy's, sloopDX's and OberVave's workflows.
 name: check
@@ -67,3 +68,13 @@ jobs:
 
       - name: Host tests (the ones that need the ROMs' sound are skipped)
         run: sh tests/run_tests.sh
+
+      - name: The site, with the ROM-free release build
+        run: |
+          sh build.sh --romload --release "$(cat VERSION)"
+          python3 tools/make_site.py "build/rdpno-$(cat VERSION).fwsc" "$(cat VERSION)" build/site
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: build/site
