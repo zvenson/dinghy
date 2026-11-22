@@ -12,9 +12,15 @@ from flash, and plays it from the keys and MIDI.
 > Rhodes MK-80's eight tones). The emulation gives librdpiano's samples bit for bit (`tests/rdp_compare.sh`), on
 > one core or split over two.
 >
-> **No ready-made firmware:** the ROMs are Roland's and are not in this repository, so you build RDPNO yourself,
-> with the ROMs on your own computer, in one command ([Build it yourself](#build-it-yourself)). Please do not
-> publish the packages you build: they contain the ROMs.
+> **Install it from the browser:** [r-jeb.github.io/rdpno-fm1](https://r-jeb.github.io/rdpno-fm1/) (Chrome or Edge,
+> the FM-1 connected by USB). That firmware holds **no Roland data**: the ROMs are Roland's, so you load **your own
+> dumps** into the FM-1 from the [load page](https://r-jeb.github.io/rdpno-fm1/load/), one set at a time (MKS-20 A,
+> MKS-20 B or MK-80). The page makes the ROM pack in the browser; nothing leaves your computer except to the FM-1. A
+> firmware update clears the ROMs; the installer loads them again in the same go. What the three pages show:
+> [the screens](https://r-jeb.github.io/rdpno-fm1/screens/).
+>
+> You can still build RDPNO yourself with the ROMs built in ([Build it yourself](#build-it-yourself)); please do not
+> publish such packages: they contain the ROMs.
 
 **How many notes:** the voices at 20 kHz (pianos, vibraphone, e-piano 1, the MK-80's Classic, Special, Blend,
 A.Piano 1/2) play 6 to 8 notes clean, also with the pedal; the ones at 32 kHz (harpsichord, clavi, e-piano 2, the
