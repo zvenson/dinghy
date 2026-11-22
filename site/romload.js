@@ -224,6 +224,8 @@ const RomLoad = (() => {
     close() { this.i.onmidimessage = null; }
     /* the pack, with progress(fraction); resolves when the FM-1 has checked it (it then restarts) */
     async load(pk, progress = () => {}) {
+      if (this.info && this.info.area && pk.length > this.info.area)
+        throw new Error(`the pack (${pk.length} bytes) is larger than the FM-1's room for it (${this.info.area} bytes)`);
       const fr = loadFrames(pk);
       await this.checked(fr[0], 8000);
       for (let k = 1; k < fr.length - 1; k++) { await this.checked(fr[k], 4000); progress(k / (fr.length - 1)); }

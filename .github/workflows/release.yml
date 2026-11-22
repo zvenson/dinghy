@@ -74,6 +74,12 @@ jobs:
           sh build.sh --romload --release "$(cat VERSION)"
           python3 tools/make_site.py "build/rdpno-$(cat VERSION).fwsc" "$(cat VERSION)" build/site
 
+      - name: The site in a browser (a fake FM-1 behind Web MIDI, random ROMs)
+        run: |
+          python3 -m pip install playwright
+          python3 -m playwright install --with-deps chromium
+          python3 tests/site_test.py build/site
+
       - uses: actions/upload-artifact@v4
         with:
           name: site
