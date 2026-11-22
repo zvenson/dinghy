@@ -37,6 +37,8 @@ else
     echo "== RdPiano core vs librdpiano: skipped (no rdpiano checkout; RDPIANO=... or ../rdpiano)"
 fi
 
+$CC -Ifirmware/src -o "$OUT/romtest_test" tests/romtest_test.c
+run "ROM area test (romtest.c, fake flash): write, power cycle, read back; a bad bit found; nothing outside the area" "$OUT/romtest_test"
 $CC -DBOARD_SMK37=1 -Ifirmware/hal -o "$OUT/smk_flash_test" tests/smk_flash_test.c
 run "SMK-37 flash map: settings, blobs, owner tag, slots in the store; never the head, BTIF/USRTRIM, USR, key_mac" "$OUT/smk_flash_test"
 $CC -o "$OUT/smk_wheel_test" tests/smk_wheel_test.c

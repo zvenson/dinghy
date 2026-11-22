@@ -237,6 +237,9 @@ static int fl_write(uint32_t off, const uint8_t *src_ram, uint32_t n)
     return 0;
 }
 
+/* One word through XIP (the plain window: after fl_plain_window_init; below it the app's code, decrypted). */
+static inline uint32_t fl_xip_word(uint32_t off) { return *(const volatile uint32_t *)FL_XIP(off); }
+
 /* Read back through XIP (needs fl_plain_window_init) and compare. */
 static int fl_verify_xip(uint32_t off, const uint8_t *ref, uint32_t n)
 {

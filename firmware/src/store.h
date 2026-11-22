@@ -39,8 +39,21 @@
 #define SETTINGS_AT 0x000FC000u                 /* (Felucca's globals area) */
 #define BLOBS_AT 0x000F4000u
 #define SLOTS_AT 0x00097000u                    /* (Felucca's main store, FL_DATA) */
+#if RDP_ROMTEST
+/* RDPNO's ROM area test (tools/build.py --romtest, romtest.c): the app slot ends below ROMT_LO, the VM starts at
+ * ROMT_HI; the plain XIP window starts at ROMT_LO. The update loader rewrites this area with every update. */
+#ifndef ROMT_LO
+#define ROMT_LO 0x0001A000u
+#endif
+#define ROMT_HI 0x00093000u
+#define FL_PLAIN_LO ROMT_LO
+#define ROMT_OK(off, n) FL_IN(off, n, ROMT_LO, ROMT_HI)
+_Static_assert(ROMT_LO % 0x1000u == 0u && ROMT_LO >= 0x18000u && ROMT_LO < ROMT_HI, "ROM test: ROMT_LO");
+#else
+#define ROMT_OK(off, n) 0
+#endif
 #define FL_RANGE_OK(off, n) (FL_IN(off, n, FL_OTA_LO, FL_OTA_HI) || FL_IN(off, n, SETTINGS_AT, SETTINGS_AT + 0x1000u) || \
-                             FL_IN(off, n, BLOBS_AT, BLOBS_AT + NBLOB * 0x1000u) || \
+                             FL_IN(off, n, BLOBS_AT, BLOBS_AT + NBLOB * 0x1000u) || ROMT_OK(off, n) || \
                              FL_IN(off, n, SLOTS_AT, SLOTS_AT + NSLOT * SLOT_SECT * 0x1000u))
 #endif
 #include "fm1_flash_map.h"

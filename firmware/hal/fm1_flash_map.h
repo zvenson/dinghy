@@ -80,7 +80,9 @@ _Static_assert(FL_DATA_HI <= FL_OTA_LO && FL_APP_HI <= FL_DATA_LO, "SMK: windows
 #define FL_PROTECTED(off, n) (FL_HITS(off, n, 0u, FL_HEAD_HI) || FL_HITS(off, n, FL_CAL_LO, FL_CAL_HI) ||                               FL_HITS(off, n, FL_USRRES_LO, FL_USRRES_HI) || (uint32_t)(off) >= FL_KEYMAC_LO ||                               (uint32_t)(n) > FL_KEYMAC_LO - (uint32_t)(off))
 #define FL_GUARD(off, n) (FL_RANGE_OK(off, n) && !FL_PROTECTED(off, n))
 #else /* FM-1 */
+#ifndef FL_PLAIN_LO                                /* (RDPNO's ROM area test sets it lower: store.h) */
 #define FL_PLAIN_LO     0x00093000u                /* plain XIP window from the FM-1 VM start */
+#endif
 #define FL_DATA_LO      0x00097000u                /* Felucca main store */
 #define FL_DATA_HI      0x000E0000u
 #define FL_GLOB_LO      0x000FC000u                /* Felucca superblock / globals */
