@@ -27,6 +27,9 @@ static void app_idle(void);
 #if RDP_ROMS_IN_FLASH                           /* the ROMs come from the load page (romload.c) */
 static int rl_sysex(const uint8_t *p, uint32_t n);
 #define APP_SYSEX rl_sysex
+#ifndef RDP_LOAD_URL
+#define RDP_LOAD_URL "R-JEB.GITHUB.IO/RDPNO-FM1"  /* (the load page: docs/load/, GitHub Pages) */
+#endif
 #endif
 #define LCD_IDLE app_idle                       /* while the screen's DMA runs: MIDI in (platform.c) */
 #ifndef APP_NAME
@@ -373,9 +376,6 @@ static void app_idle(void)
 }
 
 #if RDP_ROMS_IN_FLASH
-#ifndef RDP_LOAD_URL
-#define RDP_LOAD_URL "R-JEB.GITHUB.IO/RDPNO-FM1"
-#endif
 static void rl_stop_sound(void) { rdp_ready = 0; }   /* (the render stops: silence) */
 static void rl_restart(void)                    /* loaded and checked: start again with it */
 {
