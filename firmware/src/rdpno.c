@@ -22,7 +22,12 @@
  *
  * The board runs at 20 kHz (some voices 32 kHz) inside the audio interrupt; a linear interpolation takes it to
  * 44.1 kHz, then fx.c. Integers only (docs/RULES.md). */
+#include <stdint.h>
 static void app_idle(void);
+#if RDP_ROMS_IN_FLASH                           /* the ROMs come from the load page (romload.c) */
+static int rl_sysex(const uint8_t *p, uint32_t n);
+#define APP_SYSEX rl_sysex
+#endif
 #define LCD_IDLE app_idle                       /* while the screen's DMA runs: MIDI in (platform.c) */
 #ifndef APP_NAME
 #define APP_NAME "RDPNO"
@@ -32,6 +37,9 @@ static void app_idle(void);
 #define RDP_SPLIT_WAIT() cpu1_wait()
 #include "rdp.c"
 #include "fx.c"
+#if RDP_ROMS_IN_FLASH
+#include "romload.c"
+#endif
 
 /* ---- the sound: the board, resampled, then the effects (audio interrupt) */
 static volatile uint32_t rdp_ready;            /* rdp_init is done: render */
@@ -114,7 +122,7 @@ static void set_defaults(void)
 static int set_ok(void)
 {
     const fx_par_t *f = &set.fx;
-    return set.patch < RDP_NPATCH && set.ch <= 16u && set.vel && set.vel <= 127u && (int8_t)set.oct >= -2 &&
+    return set.patch < RDP_NPATCH_MAX && set.ch <= 16u && set.vel && set.vel <= 127u && (int8_t)set.oct >= -2 &&
            (int8_t)set.oct <= 2 && set.page < 3u && set.voices >= 4u && set.voices <= 16u && f->vol <= 15u && f->bass < FX_NLEVEL && f->treble < FX_NLEVEL &&
            f->mid_level < FX_NLEVEL && f->mid_freq < FX_NMIDF && f->width < FX_NWIDTH && f->cho_rate &&
            f->cho_rate <= 15u && f->cho_depth <= 15u && f->trm_rate && f->trm_rate <= 15u && f->trm_depth <= 15u &&
@@ -280,10 +288,20 @@ static void val_text(uint32_t v, char *p)
 static void draw_voice(void)
 {
     char s[40], *p = s;
-    draw_text_box(0, 10, 240, &FONT_S, RDP_NO_ROMS ? "NO ROMS: BUILD IT YOURSELF" : RDP_PATCH[set.patch].name,
-                  RDP_NO_ROMS ? C_LED : C_ACC, 1);
-    p = put(p, "VOICE "); p = put_u(p, RDP_PATCH[set.patch].num); p = put(p, "  "); p = put(p, RDP_SET_NAME);
-    p = put(p, "  "); p = put_u(p, RDP_PATCH[set.patch].khz); p = put(p, "kHz"); *p = 0;
+    uint32_t i = set.patch < rdp_npatch ? set.patch : 0u;
+    if (!rdp_npatch) {                          /* no ROM pack */
+#if RDP_ROMS_IN_FLASH
+        draw_text_box(0, 10, 240, &FONT_S, "NO ROMS: LOAD THEM AT", C_LED, 1);
+        draw_text_box(0, 32, 240, &FONT_S, RDP_LOAD_URL, C_OFF, 1);
+#else
+        draw_text_box(0, 10, 240, &FONT_S, RDP_NO_ROMS ? "NO ROMS: BUILD IT YOURSELF" : "ROM DATA BROKEN", C_LED, 1);
+        draw_text_box(0, 32, 240, &FONT_S, "", C_OFF, 1);
+#endif
+        return;
+    }
+    draw_text_box(0, 10, 240, &FONT_S, rdp_patch[i].name, C_ACC, 1);
+    p = put(p, "VOICE "); p = put_u(p, rdp_patch[i].num); p = put(p, "  "); p = put(p, rdp_set_name);
+    p = put(p, "  "); p = put_u(p, rdp_patch[i].khz); p = put(p, "kHz"); *p = 0;
     draw_text_box(0, 32, 240, &FONT_S, s, C_OFF, 1);
 }
 static void draw_page(uint32_t page)
@@ -346,13 +364,48 @@ static void midi_in(void)
         else if (ty == 0x80u || ty == 0x90u) note_off(d1);
         else if (ty == 0xB0u && d1 == 64u) pedal(d2 >= 64u);
         else if (ty == 0xB0u && (d1 == 120u || d1 == 123u)) release_all();   /* all sound / all notes off */
-        else if (ty == 0xC0u) want_patch = d1 % RDP_NPATCH;
+        else if (ty == 0xC0u && rdp_npatch) want_patch = d1 % rdp_npatch;
     }
 }
 static void app_idle(void)
 {
     if (idle_ok) midi_in();
 }
+
+#if RDP_ROMS_IN_FLASH
+#ifndef RDP_LOAD_URL
+#define RDP_LOAD_URL "R-JEB.GITHUB.IO/RDPNO-FM1"
+#endif
+static void rl_stop_sound(void) { rdp_ready = 0; }   /* (the render stops: silence) */
+static void rl_restart(void)                    /* loaded and checked: start again with it */
+{
+    uint32_t t0 = fm1_ms;
+    lcd_fill(0, 0, 240, 240, C_BLACK);
+    draw_text_box(0, 100, 240, &FONT_S, "ROMS LOADED", C_ACC, 1);
+    draw_text_box(0, 124, 240, &FONT_S, rdp_set_name, C_WHITE, 1);
+    draw_text_box(0, 148, 240, &FONT_S, "RESTARTING", C_OFF, 1);
+    while (so_w != so_r && fm1_ms - t0 < 500u) fm1_wdt_feed();   /* the answer out first */
+    fm1_delay_ms(100);
+    bootguard_clear(&bootguard);
+    usb_detach();
+    fm1_delay_ms(30);
+    fm1_reboot();
+}
+static uint32_t rl_drawn = ~0u;
+static void rl_screen(void)                     /* a load's screen: drawn when it changes */
+{
+    uint32_t pct = rl.len ? rl.next / (rl.len / 100u + 1u) : 0u, stalled = fm1_ms - rl.t_last > 10000u;
+    uint32_t st = (pct / 5u) | stalled << 8;
+    char s[24], *p = s;
+    if (st == rl_drawn) return;
+    if (rl_drawn == ~0u) lcd_fill(0, 0, 240, 240, C_BLACK);
+    rl_drawn = st;
+    draw_text_box(0, 80, 240, &FONT_S, "LOADING THE ROMS", C_ACC, 1);
+    p = put_u(p, pct > 100u ? 100u : pct); p = put(p, " %"); *p = 0;
+    draw_text_box(0, 110, 240, &FONT_L, s, C_WHITE, 1);
+    draw_text_box(0, 160, 240, &FONT_S, stalled ? "STOPPED: TRY AGAIN" : "DO NOT UNPLUG", stalled ? C_LED : C_OFF, 1);
+}
+#endif
 
 #if RDP_ROMTEST
 #include "romtest.c"                            /* tools/build.py --romtest: the ROM area test, nothing else */
@@ -382,12 +435,14 @@ static void app_main(void)
 #if RDP_ROMTEST
     romtest_main();                             /* (does not return) */
 #endif
-    if (rdp_init(set.patch)) {                  /* (a broken rdp_rom.h: say so, stay in the main loop) */
-#if RDP_NO_ROMS
-        draw_text_box(0, 130, 240, &FONT_S, "NO ROMS: BUILD IT YOURSELF", C_LED, 1);
+#if RDP_ROMS_IN_FLASH
+    fl_plain_window_init();                     /* the pack's area read as it is (store.h FL_PLAIN_LO = ROMT_LO) */
+    rl.have = rdp_open(fm1_xip_ptr(ROMT_LO), ROMT_HI - ROMT_LO) == 0;
 #else
-        draw_text_box(0, 130, 240, &FONT_S, "ROM DATA BROKEN", C_LED, 1);
+    (void)rdp_open(RDP_PACK, sizeof RDP_PACK);
 #endif
+    if (rdp_init(set.patch)) {                  /* no pack, or a broken one: the screen says so (draw_voice) */
+        draw_text_box(0, 130, 240, &FONT_S, "NO ROMS", C_LED, 1);
     } else {
         rs_frac = 65536u;
         rdp_ready = 1;
@@ -399,6 +454,15 @@ static void app_main(void)
         int32_t oct = (int8_t)set.oct, e;
         uint32_t base = (uint32_t)((int32_t)KEY0 + 12 * oct);
         platform_poll();
+#if RDP_ROMS_IN_FLASH
+        if (rl.active) { rl_screen(); continue; }   /* a load (romload.c): its screen, nothing else */
+        if (rl_drawn != ~0u) {                  /* it failed: the panel again (NO ROMS; the page says why) */
+            rl_drawn = ~0u;
+            lcd_fill(0, 0, 240, 240, C_BLACK);
+            patch_drawn = page_drawn = midi_drawn = load_drawn = leds_set = ~0u;
+            for (k = 0; k < 4u; k++) rows_drawn[k] = ~0u;
+        }
+#endif
 
         keys = fm1_in.notes;                    /* bit k: key k (0 = F3 .. 26 = G5) */
         down = keys & ~prev;
@@ -438,9 +502,9 @@ static void app_main(void)
             set.page = (uint8_t)(pg < 0 ? pg + (int32_t)PG_N : pg);
             hot = V_NONE; dirty = 1; t_change = fm1_ms;
         }
-        if ((e = fm1_enc_take(ENC_PRESETS)) != 0) {
-            int32_t p = ((int32_t)set.patch + e) % (int32_t)RDP_NPATCH;
-            want_patch = (uint32_t)(p < 0 ? p + (int32_t)RDP_NPATCH : p);
+        if ((e = fm1_enc_take(ENC_PRESETS)) != 0 && rdp_npatch) {
+            int32_t p = ((int32_t)set.patch + e) % (int32_t)rdp_npatch;
+            want_patch = (uint32_t)(p < 0 ? p + (int32_t)rdp_npatch : p);
         }
         if ((e = fm1_enc_take(ENC_ALGORITHM)) != 0) {
             int32_t c = (int32_t)set.ch + e;

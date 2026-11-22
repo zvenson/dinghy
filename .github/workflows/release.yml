@@ -59,6 +59,7 @@ jobs:
           sh build.sh --set mk80
           sh build.sh --set mks20b
           sh build.sh --romtest                  # (the ROM area test: the small app slot fits)
+          sh build.sh --romload                  # (the ROMs from the load page)
           BOARD=smk37 sh build.sh
           BOARD=smk37 MODEL=elite sh build.sh
           BOARD=smk37 MODEL=mke sh build.sh

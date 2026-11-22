@@ -2,7 +2,8 @@
 /* rdp.c: the CPU-B board of Roland's SA pianos (MKS-20, RD-1000, Rhodes MK-80) on the FM-1.
  *
  * A port of librdpiano (giulioz/rdpiano, Copyright (C) Giulio Zausa and contributors, GPL-3.0) to C for the FM-1:
- * no heap, no float, no C++, the ROMs read straight from flash (tools/pack_roms.py -> firmware/gen/rdp_rom.h).
+ * no heap, no float, no C++, the ROMs read straight from flash: a ROM pack (tools/pack_roms.py: its layout), built
+ * in (firmware/gen/rdp_rom.h, RDP_PACK) or loaded into the flash by the load page (RDP_ROMS_IN_FLASH, romload.c).
  * The HD6301 core is MAME's m6800 (license BSD-3-Clause, copyright-holders Aaron Giles, Nicola Salmoria), as
  * rdpiano carries it; its opcode handlers below are rdpiano's mcu_ops.h, mechanically turned into C functions.
  *
@@ -18,15 +19,21 @@
  *     CPU's 2 MHz. rdp_exact = 1 runs 100 (32 kHz: 62) *cycles* instead, as the board does; 0 = librdpiano's way,
  *     bit for bit (tests/rdp_compare.sh).
  *
- *   rdp_init()            once, in the main loop, before the sound starts: reset, the handshake, patch 0
+ *   rdp_open(pack, max)   check a ROM pack (its layout, its CRC) and take it: 0 = good (rdp_patch, rdp_npatch, ...)
+ *   rdp_init(patch)       then, in the main loop, before the sound starts: reset, the handshake, the patch
  *   rdp_select(i)         main loop: ask for patch i
  *   rdp_take()            audio interrupt, before the block: pause the render for a patch change (rdp_paused)
  *   rdp_poll()            main loop: once paused, unpack the patch's window, send the board's reload, go on
  *   rdp_midi(st, d1, d2)  main loop: note on/off, sustain (CC 64), program change, as the board understands them
- *   rdp_render()          audio interrupt: one sample at RDP_PATCH[i].khz (20 or 32 kHz), about +-2^17 */
+ *   rdp_render()          audio interrupt: one sample at rdp_patch[i].khz (20 or 32 kHz), about +-2^17 */
 #include <stdint.h>
 #include "rdp_tables.h"
-#include "rdp_rom.h"
+#ifndef RDP_ROMS_IN_FLASH
+#define RDP_ROMS_IN_FLASH 0                     /* 1: no ROMs built in, the pack is in the flash (romload.c) */
+#endif
+#if !RDP_ROMS_IN_FLASH
+#include "rdp_rom.h"                            /* RDP_PACK (tools/pack_roms.py) */
+#endif
 #ifndef RDP_NO_ROMS
 #define RDP_NO_ROMS 0                           /* (a header from before --no-roms) */
 #endif
@@ -3430,26 +3437,98 @@ static volatile u32 rdp_pending;                /* 1 + patch: asked for */
 static volatile u32 rdp_paused;                 /* the render stands still (rdp_take saw rdp_pending) */
 static u32 rdp_cur;
 
+/* ---- the ROM pack (tools/pack_roms.py: the layout): checked once, its tables copied into RAM, the wave, the
+ * program and the windows read where they are (built in, or the flash: RDP_ROMS_IN_FLASH) */
+#define RDP_PACK_HDR 512u
+#define RDP_NPATCH_MAX 8u
+#define RDP_NWIN_MAX 4u
+typedef struct { char name[16]; u8 win, khz, num; u16 off; u32 addr; } rdp_patch_t;
+static rdp_patch_t rdp_patch[RDP_NPATCH_MAX];
+static u32 rdp_npatch;                          /* 0: no pack (NO ROMS) */
+static char rdp_set_name[17];
+static u32 rdp_set_id, rdp_pack_crc;
+static const u8 *rdp_wave_src, *rdp_prog_src, *rdp_win_src[RDP_NWIN_MAX];
+static u32 rdp_win_len[RDP_NWIN_MAX];
+static u8 rdp_page_pos[128];
+
+static u32 rdp_rd32(const u8 *p) { return (u32)p[0] | (u32)p[1] << 8 | (u32)p[2] << 16 | (u32)p[3] << 24; }
+static u32 rdp_crc32(const u8 *p, u32 n)
+{
+    u32 c = 0xFFFFFFFFu, k;
+    while (n--) {
+        c ^= *p++;
+        for (k = 0; k < 8u; k++) c = c & 1u ? (c >> 1) ^ 0xEDB88320u : c >> 1;
+    }
+    return ~c;
+}
+/* a pack of at most max bytes at pk: 0 = good, taken; else -1 and no pack (rdp_npatch 0) */
+static int rdp_open(const u8 *pk, u32 max)
+{
+    static const char MAGIC[8] = {'R', 'D', 'P', 'N', 'O', 'P', 'K', '1'};
+    u32 i, len, np, nw;
+    rdp_npatch = 0;
+    for (i = 0; i < 8u; i++) if (pk[i] != (u8)MAGIC[i]) return -1;
+    len = rdp_rd32(pk + 8);
+    np = pk[33];
+    nw = pk[34];
+    if (len < RDP_PACK_HDR + 128u * 3072u + 0x2000u || len > max || pk[35] != 1u || !np || np > RDP_NPATCH_MAX || !nw || nw > RDP_NWIN_MAX ||
+        pk[32] > 2u || rdp_crc32(pk + 16, len - 16u) != rdp_rd32(pk + 12))
+        return -1;
+    if (rdp_rd32(pk + 40) != 128u * 3072u || rdp_rd32(pk + 48) != 0x2000u || rdp_rd32(pk + 36) > len - 128u * 3072u ||
+        rdp_rd32(pk + 44) > len - 0x2000u)
+        return -1;
+    rdp_wave_src = pk + rdp_rd32(pk + 36);
+    rdp_prog_src = pk + rdp_rd32(pk + 44);
+    for (i = 0; i < nw; i++) {
+        u32 o = rdp_rd32(pk + 52 + 8u * i), n = rdp_rd32(pk + 56 + 8u * i);
+        if (o > len || n > len - o) return -1;
+        rdp_win_src[i] = pk + o;
+        rdp_win_len[i] = n;
+    }
+    for (i = 0; i < np; i++) {
+        const u8 *q = pk + 96 + 32u * i;
+        u32 k;
+        for (k = 0; k < 16u; k++) rdp_patch[i].name[k] = (char)q[k];
+        rdp_patch[i].name[15] = 0;
+        rdp_patch[i].win = q[16];
+        rdp_patch[i].khz = q[17];
+        rdp_patch[i].num = q[18];
+        rdp_patch[i].off = (u16)rdp_rd32(q + 20);
+        rdp_patch[i].addr = rdp_rd32(q + 24);
+        if (q[16] >= nw || (q[17] != 20u && q[17] != 32u) || rdp_rd32(q + 20) >= 0x8000u) return -1;
+    }
+    for (i = 0; i < 128u; i++) {
+        rdp_page_pos[i] = pk[352 + i];
+        if (rdp_page_pos[i] >= 128u) return -1;
+    }
+    for (i = 0; i < 16u; i++) rdp_set_name[i] = (char)pk[16 + i];
+    rdp_set_name[16] = 0;
+    rdp_set_id = pk[32];
+    rdp_pack_crc = rdp_rd32(pk + 12);
+    rdp_npatch = np;
+    return 0;
+}
+
 static int rdp_unpack(u32 i, u8 *d)             /* patch i's window -> d; 0 = done */
 {
-    u32 w = RDP_PATCH[i].win;
-    return lz4_unpack(RDP_WIN[w], RDP_WIN_LEN[w], d, 0x8000u) == 0x8000u ? 0 : -1;
+    u32 w = rdp_patch[i].win;
+    return lz4_unpack(rdp_win_src[w], rdp_win_len[w], d, 0x8000u) == 0x8000u ? 0 : -1;
 }
 
 static void rdp_set(u32 i, const u8 *win)       /* the render's side of a patch change (MCU::loadSounds) */
 {
-    u32 target = RDP_PATCH[i].off + 0x4000u;
+    u32 target = rdp_patch[i].off + 0x4000u;
     rdp_params = win;
     rdp_hdr[0] = 0x01;
     rdp_hdr[1] = (u8)(target >> 8);
     rdp_hdr[2] = (u8)target;
-    rdp_khz32 = RDP_PATCH[i].khz == 32u;
+    rdp_khz32 = rdp_patch[i].khz == 32u;
     rdp_cur = i;
 }
 
 static int rdp_select(u32 i)                    /* main loop: 0 = asked (rdp_take, rdp_poll do it), -1 = busy or bad */
 {
-    if (i >= RDP_NPATCH || rdp_pending) return -1;
+    if (i >= rdp_npatch || rdp_pending) return -1;
     rdp_pending = 1u + i;
     return 0;
 }
@@ -3485,25 +3564,22 @@ static void rdp_reset(void)                     /* librdpiano Mcu::reset */
     m_icount = 0;
 }
 
-static int rdp_init(u32 patch)                  /* main loop, before the render runs: 0 = ready */
+static int rdp_init(u32 patch)                  /* main loop, after rdp_open, before the render runs: 0 = ready */
 {
     u32 i;
-#if RDP_NO_ROMS
-    (void)patch; (void)i;
-    return -1;                                  /* (built without Roland's ROMs: tools/pack_roms.py --no-roms) */
-#else
-    for (i = 0; i < sizeof rdp_prog; i++) rdp_prog[i] = RDP_PROG[i];
+    if (!rdp_npatch) return -1;                 /* no pack (rdp_open) */
+    for (i = 0; i < sizeof rdp_prog; i++) rdp_prog[i] = rdp_prog_src[i];
     rdp_fast = 1;                               /* the scan's bytes, as mcu_scan knows them */
     for (i = 0; i < sizeof RDP_SCAN; i++)
         if (rdp_prog[(RDP_SCAN_PC & 0x1FFFu) + i] != RDP_SCAN[i]) rdp_fast = 0;
     for (i = 0; i < sizeof RDP_IDLE; i++)
         if (rdp_prog[(RDP_IDLE_PC & 0x1FFFu) + i] != RDP_IDLE[i]) rdp_fast = 0;
-    for (i = 0; i < sizeof rdp_wram; i++) rdp_wram[i] = RDP_WAVE[i];   /* the most used pages into RAM */
+    for (i = 0; i < sizeof rdp_wram; i++) rdp_wram[i] = rdp_wave_src[i];   /* the most used pages into RAM */
     for (i = 0; i < 128u; i++) {
-        u32 pos = RDP_PAGE_POS[i];
-        sa_page[i] = (pos < RDP_RAM_PAGES ? rdp_wram : RDP_WAVE) + 3072u * pos;
+        u32 pos = rdp_page_pos[i];
+        sa_page[i] = (pos < RDP_RAM_PAGES ? rdp_wram : rdp_wave_src) + 3072u * pos;
     }
-    if (patch >= RDP_NPATCH) patch = 0;
+    if (patch >= rdp_npatch) patch = 0;
     if (rdp_unpack(patch, rdp_win)) return -1;
     rdp_set(patch, rdp_win);
     rdp_reset();
@@ -3511,7 +3587,6 @@ static int rdp_init(u32 patch)                  /* main loop, before the render 
     for (i = 0; i < 1024u; i++) rdp_render();
     rdp_push(0x31); rdp_push(0x30);
     return 0;
-#endif
 }
 
 /* the CPU's macros stay in here */

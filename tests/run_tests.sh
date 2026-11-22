@@ -37,6 +37,11 @@ else
     echo "== RdPiano core vs librdpiano: skipped (no rdpiano checkout; RDPIANO=... or ../rdpiano)"
 fi
 
+python3 tools/pack_roms.py --set mks20b --fake --out "$OUT/fake_rom.h" --pack "$OUT/fake.pack" >/dev/null
+python3 tools/fm1_romload.py frames "$OUT/fake.pack" "$OUT/fake.frames"
+$CC -Ifirmware/src -o "$OUT/romload_test" tests/romload_test.c
+run "ROM loader (romload.c, fake flash): a load as the page sends it, frames twice, the failures, nothing outside" \
+    "$OUT/romload_test" "$OUT/fake.pack" "$OUT/fake.frames"
 $CC -Ifirmware/src -o "$OUT/romtest_test" tests/romtest_test.c
 run "ROM area test (romtest.c, fake flash): write, power cycle, read back; a bad bit found; nothing outside the area" "$OUT/romtest_test"
 $CC -DBOARD_SMK37=1 -Ifirmware/hal -o "$OUT/smk_flash_test" tests/smk_flash_test.c

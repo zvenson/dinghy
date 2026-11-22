@@ -398,6 +398,13 @@ static void platform_poll(void)
     int32_t a;
     fm1_wdt_feed();
     usb_retry(fm1_ms);
+#ifdef APP_SYSEX
+    {                                           /* the app's own SysEx frames first (it takes them), then the updater's */
+        const uint8_t *fp;
+        uint32_t fn;
+        if (ota_frame_get(&fp, &fn)) (void)APP_SYSEX(fp, fn);
+    }
+#endif
     ota_service();
     if (usb.ota_req) {
         usb.ota_req = 0;

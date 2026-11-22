@@ -16,15 +16,28 @@ saves 20..28 KB of flash, if a build does not fit (two patches share a window: M
 DIR (or RDP_ROMS) holds the ROM dumps as rdpiano names them (its roms/ folder). The ROMs are Roland's: they are
 not part of this repository, and a build that contains them is yours to keep, not to hand out.
 
-What goes into the header (all const, in flash):
-  RDP_WAVE      the three wave ROMs, descrambled, 3 bytes per address (exp sample, signs, delta), 384 KiB, in
-                pages of 1024 addresses, the most used first (PAGE_ORDER, RDP_PAGE_POS)
-  RDP_WIN_*     the 32 KiB windows of the parameter ROM the set's patches use, descrambled, LZ4 blocks
-  RDP_PROG      the CPU-B program (RD200_B, the one rdpiano's MIDI handshake is written for), 8 KiB
-  RDP_PATCH[]   name, window, sample rate (20 or 32 kHz), offset in the window, address in the ROM
+What goes into the header: RDP_PACK, the ROM pack (all const, in flash), the same bytes the load page builds in
+the browser (docs/load/index.html) and sends to an RDPNO that keeps its ROMs in flash (--pack FILE writes them):
+
+  0    "RDPNOPK1"                     magic
+  8    u32 length of the pack          12  u32 CRC-32 of bytes 16 .. length
+  16   the set's name (16 bytes, NUL padded)
+  32   u8 set (0 mks20a, 1 mks20b, 2 mk80), u8 patches (1..8), u8 windows (1..4), u8 1 (the version)
+  36   u32 offset, length: the wave (393216), the CPU-B program (8192)
+  52   u32 offset, length of each parameter window (4; LZ4 blocks)
+  96   8 patches of 32 bytes: name (16, NUL padded), u8 window, u8 kHz (20 or 32), u8 the voice's number, 0,
+       u32 offset in the window, u32 address in the parameter ROM, 0
+  352  the page table: where each of the wave ROM's 128 pages is in the wave (most used first)
+  512  the wave: the three wave ROMs, descrambled, 3 bytes per address (exp sample, signs, delta), 384 KiB, in pages
+       of 1024 addresses, the most used first (PAGE_ORDER); then the program (RD200_B, the one rdpiano's MIDI
+       handshake is written for), 8 KiB, descrambled; then the windows (32 KiB of the parameter ROM each,
+       descrambled, LZ4) the set's patches use
+All little-endian. --no-roms: zeros of the same length (no magic: the firmware says NO ROMS).
 """
 import argparse
+import binascii
 import os
+import struct
 import sys
 from pathlib import Path
 
@@ -112,6 +125,34 @@ def prog_unscramble(r):
                  for s in range(0x2000))
 
 
+SET_ID = {"mks20a": 0, "mks20b": 1, "mk80": 2}
+PACK_HDR = 512
+
+
+def make_pack(set_name, label, patches, wave_sorted, page_pos, prog, wins_lz4):
+    """the ROM pack (see above): patches [(name, window index, khz, offset in the window, address, number)]"""
+    data = bytearray(wave_sorted) + prog
+    win_tab = []
+    for c in wins_lz4:
+        win_tab.append((PACK_HDR + len(data), len(c)))
+        data += c
+    total = PACK_HDR + len(data)
+    h = bytearray(PACK_HDR)
+    h[0:8] = b"RDPNOPK1"
+    h[16:32] = label.encode().ljust(16, b"\0")[:16]
+    h[32:36] = bytes((SET_ID[set_name], len(patches), len(wins_lz4), 1))
+    struct.pack_into("<4I", h, 36, PACK_HDR, len(wave_sorted), PACK_HDR + len(wave_sorted), len(prog))
+    for k, (o, n) in enumerate(win_tab):
+        struct.pack_into("<2I", h, 52 + 8 * k, o, n)
+    for k, (name, win, khz, off, addr, num) in enumerate(patches):
+        struct.pack_into("<16s4B3I", h, 96 + 32 * k, name.encode().ljust(16, b"\0")[:16], win, khz, num, 0, off, addr, 0)
+    h[352:480] = bytes(page_pos)
+    pack = h + data
+    struct.pack_into("<I", pack, 8, total)
+    struct.pack_into("<I", pack, 12, binascii.crc32(pack[16:]) & 0xFFFFFFFF)
+    return bytes(pack)
+
+
 def carr(name, data, per_line=24):
     lines = [f"static const uint8_t {name}[{len(data)}] = {{"]
     for i in range(0, len(data), per_line):
@@ -126,10 +167,13 @@ def main():
     ap.add_argument("--roms", default=os.environ.get("RDP_ROMS", str(SRC.parent / "rdpiano" / "roms")))
     ap.add_argument("--out", default=str(SRC / "firmware" / "gen" / "rdp_rom.h"))
     ap.add_argument("--patches", default=os.environ.get("RDP_PATCHES", ""), help="e.g. 0,4,1,5 (default: all)")
+    ap.add_argument("--pack", help="also write the ROM pack itself here (what the load page sends)")
     ap.add_argument("--raw", help="also write the unpacked wave/params/prog here (tests/rdp_compare.sh)")
     ap.add_argument("--no-roms", action="store_true", default=os.environ.get("RDP_NO_ROMS", "") == "1",
                     help="blank ROMs of the right sizes: the build compiles, links and checks its size, but the "
                          "firmware only says NO ROMS (GitHub's workflow: Roland's ROMs never go there)")
+    ap.add_argument("--fake", action="store_true",
+                    help="zeros for the ROMs, in a well-formed pack (the loader's tests: it loads, it plays nothing)")
     a = ap.parse_args()
     s, roms = dict(SETS[a.set]), Path(a.roms)
     s["patches"] = [(n, off, khz, num) for (n, off, khz), num in zip(s["patches"], s["nums"])]
@@ -140,7 +184,7 @@ def main():
             raise SystemExit(f"pack_roms: --patches {a.patches}: 0..{len(s['patches']) - 1}, comma separated")
 
     def rd(n, size):
-        if a.no_roms:
+        if a.no_roms or a.fake:
             return bytes(size)
         p = roms / n
         if not p.exists():
@@ -157,35 +201,32 @@ def main():
     params = params_unscramble(rd(s["params"], 0x20000))
     prog = prog_unscramble(rd(PROG, 0x2000))
     wins = sorted({off >> 15 for _, off, _, _ in s["patches"]})
-    parts = [f"/* generated by tools/pack_roms.py --set {a.set}: do not edit, do not commit (Roland's ROMs) */",
-             "#pragma once", "#include <stdint.h>", f'#define RDP_SET_NAME "{s["label"]}"',
-             f"#define RDP_NO_ROMS {int(a.no_roms)}",
-             f"#define RDP_NPATCH {len(s['patches'])}u", f"#define RDP_NWIN {len(wins)}u",
-             *(f'#define RDP_REF_{k} "{n}"' for k, n in zip(("IC5", "IC6", "IC7", "PARAMS"), (*s["wave"], s["params"]))),
-             carr("RDP_WAVE", wave_sorted), carr("RDP_PROG", prog),
-             "/* where each of the 128 pages of the wave ROM is in RDP_WAVE (most used first) */",
-             "static const uint8_t RDP_PAGE_POS[128] = {" + ",".join(map(str, page_pos)) + "};"]
-    total = len(wave) + len(prog)
-    for k, w in enumerate(wins):
+    if len(s["patches"]) > 8 or len(wins) > 4:
+        raise SystemExit("pack_roms: at most 8 patches and 4 parameter windows")
+    lz = []
+    for w in wins:
         raw = params[w << 15:(w + 1) << 15]
         c = lz4blk.compress(raw)
         if lz4blk.decompress(c) != raw:
             raise SystemExit("pack_roms: LZ4 round trip failed")
-        parts.append(carr(f"RDP_WIN{k}", c))
-        total += len(c)
+        lz.append(c)
         print(f"pack_roms: parameter window {w}: {len(c)} B")
-    parts.append("static const uint8_t *const RDP_WIN[RDP_NWIN] = {" + ",".join(f"RDP_WIN{k}" for k in range(len(wins))) + "};")
-    parts.append("static const uint32_t RDP_WIN_LEN[RDP_NWIN] = {" +
-                 ",".join(f"sizeof RDP_WIN{k}" for k in range(len(wins))) + "};")
-    parts.append("static const struct { const char *name; uint8_t win; uint8_t khz; uint16_t off; uint32_t addr; uint8_t num; } "
-                 "RDP_PATCH[RDP_NPATCH] = {")
-    for n, off, khz, num in s["patches"]:
-        parts.append(f'    {{"{n}", {wins.index(off >> 15)}, {khz}, {off & 0x7FFF:#06x}, {off:#07x}, {num}}},')
-    parts.append("};")
+    pack = make_pack(a.set, s["label"], [(n, wins.index(off >> 15), khz, off & 0x7FFF, off, num)
+                                         for n, off, khz, num in s["patches"]], wave_sorted, page_pos, prog, lz)
+    if a.no_roms:
+        pack = bytes(len(pack))
+    total = len(pack)
+    parts = [f"/* generated by tools/pack_roms.py --set {a.set}: do not edit, do not commit (Roland's ROMs) */",
+             "#pragma once", "#include <stdint.h>", f'#define RDP_SET_NAME "{s["label"]}"',
+             f"#define RDP_NO_ROMS {int(a.no_roms)}",
+             *(f'#define RDP_REF_{k} "{n}"' for k, n in zip(("IC5", "IC6", "IC7", "PARAMS"), (*s["wave"], s["params"]))),
+             "/* the ROM pack (tools/pack_roms.py: its layout) */", carr("RDP_PACK", pack)]
+    if a.pack:
+        Path(a.pack).write_bytes(pack)
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(parts) + "\n")
-    print(f"pack_roms: {a.set}{' (NO ROMS: blank)' if a.no_roms else ''}, {len(s['patches'])} patches, {len(wins)} parameter windows, {total} B of flash -> {out}")
+    print(f"pack_roms: {a.set}{' (NO ROMS: blank)' if a.no_roms else ''}, {len(s['patches'])} patches, {len(wins)} parameter windows, pack {total} B -> {out}")
     if a.raw:
         r = Path(a.raw)
         r.mkdir(parents=True, exist_ok=True)
