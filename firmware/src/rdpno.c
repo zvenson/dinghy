@@ -402,7 +402,7 @@ static void rl_screen(void)                     /* a load's screen: drawn when i
     rl_drawn = st;
     draw_text_box(0, 80, 240, &FONT_S, "LOADING THE ROMS", C_ACC, 1);
     p = put_u(p, pct > 100u ? 100u : pct); p = put(p, " %"); *p = 0;
-    draw_text_box(0, 110, 240, &FONT_L, s, C_WHITE, 1);
+    draw_text_box(0, 112, 240, &FONT_S, s, C_WHITE, 1);   /* (FONT_L: 24 KB more in the small slot) */
     draw_text_box(0, 160, 240, &FONT_S, stalled ? "STOPPED: TRY AGAIN" : "DO NOT UNPLUG", stalled ? C_LED : C_OFF, 1);
 }
 #endif
