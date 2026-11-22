@@ -145,10 +145,10 @@ static void romtest_main(void)
     t_enc = rt_time(0x4120u, 65536u, 65536u);
     fmt_int(v, (int32_t)t_plain); str_cpy(b, "64K RD AREA ", sizeof b); str_cpy(b + str_len(b), v, sizeof b - str_len(b));
     str_cpy(b + str_len(b), " US", sizeof b - str_len(b));
-    rt_line(6, b, C_GRAY);
+    rt_line(6, b, C_WHITE);
     fmt_int(v, (int32_t)t_enc); str_cpy(b, "64K RD CODE ", sizeof b); str_cpy(b + str_len(b), v, sizeof b - str_len(b));
     str_cpy(b + str_len(b), " US", sizeof b - str_len(b));
-    rt_line(7, b, C_GRAY);
+    rt_line(7, b, C_WHITE);
 
     if (bad_s || bad_x)
         rt_line(9, "ERROR: PLEASE REPORT", C_LED);
