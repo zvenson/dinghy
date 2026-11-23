@@ -354,6 +354,10 @@ static void app_idle(void)
     if (idle_ok) midi_in();
 }
 
+#if RDP_ROMTEST
+#include "romtest.c"                            /* tools/build.py --romtest: the ROM area test, nothing else */
+#endif
+
 static void app_main(void)
 {
     static const uint8_t KNOB[4] = {ENC_KNOB1, ENC_KNOB2, ENC_KNOB3, ENC_KNOB4};
@@ -375,6 +379,9 @@ static void app_main(void)
 
     lcd_fill(0, 0, 240, 240, C_BLACK);
     draw_text_box(0, 100, 240, &FONT_S, APP_NAME "  v" APP_VER, C_ACC, 1);
+#if RDP_ROMTEST
+    romtest_main();                             /* (does not return) */
+#endif
     if (rdp_init(set.patch)) {                  /* (a broken rdp_rom.h: say so, stay in the main loop) */
 #if RDP_NO_ROMS
         draw_text_box(0, 130, 240, &FONT_S, "NO ROMS: BUILD IT YOURSELF", C_LED, 1);

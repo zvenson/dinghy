@@ -129,6 +129,15 @@ def sdk_file(rel):
         raise SystemExit(f"fm1pkg_make: {path}: {e.strerror}. Set AC79_SDK to a JieLi AC79 SDK checkout.")
 
 
+def slot_below(end):
+    """the largest app slot whose app area (head, app.bin, cfg_tool.bin, cfg) ends at or below the flash offset end"""
+    tail = 0x120 + len(sdk_file("cfg_tool.bin")) + 0x40 + len(sdk_file("cfg/eq_cfg_hw.bin"))
+    return (end - 0x4000 - tail) & ~3
+
+
+AREA_END = None                                         # flash_image: where the app area ended (0x4000 + its length)
+
+
 def flash_image(app, key):
     spl = sdk_file("uboot.boot")                         # SDK SPL, BANKCB-encoded as in the SDK
     cfg_tool = sdk_file("cfg_tool.bin")
@@ -174,6 +183,8 @@ def flash_image(app, key):
     if 0x4000 + len(region) > FLASH_SIZE:          # (the update loader writes up to FLASH_SIZE only)
         raise SystemExit(f"app area too large: ends at 0x{0x4000 + len(region):x}, past 0x{FLASH_SIZE:x}")
     f[0x4000:0x4000 + len(region)] = region
+    global AREA_END
+    AREA_END = 0x4000 + len(region)
     return bytes(f)
 
 
