@@ -19,6 +19,7 @@ complete source under the same licence too.
 | The app `firmware/src/rdpno.c`, the effects `firmware/src/fx.c` (the equalizer after Andrew Simper's SVF paper; the chorus rates after rdpiano_juce), `tools/gen_fx_tables.py`, the port, `tests/rdp_*`, `tests/scripts/rdpno.txt` | R-Jeb |
 
 | The ROM loader `firmware/src/romload.c`, its test `romtest.c`, `tools/fm1_romload.py`, `tools/make_site.py`, the site `site/` (but `site/lib/`, `site/install/installer.html`) | R-Jeb; the loader's protocol and pages after [sq80-fm1](https://github.com/leonardolopezchavira/sq80-fm1)'s by Leonardo Lopez Chavira |
+| The font of the name on the site: `site/fonts/michroma.woff2` (Michroma, via Fontsource) | Copyright 2011 The Michroma Project Authors; **SIL OFL 1.1** (`site/fonts/OFL-Michroma.txt`) |
 | The web installer: `site/install/installer.html`, `site/lib/fm1ports.js`, `fm1pkg.js`, `fm1ota.js` | from [fm1-base](https://github.com/charlesvestal/fm1-base) (as sq80-fm1 carries it): Copyright (C) 2026 Charles Vestal, Leo Kuroshita (@kurogedelic), Hügelton Instruments, Chris Farrell; **MPL-2.0** (`LICENSES/MPL-2.0.txt`); `installer.html` changed for RDPNO (see its head) |
 
 ## Third-party material

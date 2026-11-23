@@ -2,6 +2,13 @@
    RDPNO's pages (the installer keeps its own, fm1-base's): the MKS-20's LCD blue and indicator red on black */
 :root { --bg: #0e1113; --panel: #171b1e; --line: #2a3035; --fg: #e8ecee; --dim: #9aa5ab; --hi: #5ac8e6; --led: #ff4632;
         --bad: #ff6a55; --ok: #5ac8e6; --focus: #ffd23c; }
+/* the name in Michroma (Vernon Adams, SIL OFL 1.1: fonts/OFL-Michroma.txt), a wide, square-round face after the
+   lettering on the MKS-20's panel, made heavier with a stroke; white, underlined in blue as the panel's DIGITAL PIANO */
+@font-face { font-family: "Michroma"; src: url("fonts/michroma.woff2") format("woff2"); font-display: swap; }
+.logo { font-family: "Michroma", sans-serif; color: #fff; -webkit-text-stroke: .045em #fff; letter-spacing: .08em;
+        border-bottom: .09em solid #2f7fd0; padding-bottom: .06em; line-height: 1.25; display: inline-block; }
+h1 .logo { font-size: 40px; margin-right: 12px; }
+.nav .logo { font-size: 13px; border-bottom-width: 2px; text-decoration: none; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
 main, footer { max-width: 760px; margin: 0 auto; padding: 32px 20px 0; }
