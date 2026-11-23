@@ -47,7 +47,7 @@ def pack7(data):
 
 def frame(cmd, body=()):
     b = [cmd, *body]
-    if 0x10 <= cmd <= 0x12:                     # the check: the sum from cmd on, 2 x 7 bits
+    if cmd >= 0x10:                             # the check: the sum from cmd on, 2 x 7 bits
         s = sum(b)
         b += [s & 0x7F, (s >> 7) & 0x7F]
     return bytes([0xF0, *HEAD, *b, 0xF7])
@@ -66,7 +66,8 @@ def parse_hello(m):
     if len(m) < 39 or list(m[:6]) != [0xF0, *HEAD, 0x7F, 0x01]:
         return None
     return {"protocol": m[9], "pack": bool(m[10]), "set": SETS.get(m[11], "?") if m[10] else None, "patches": m[12],
-            "area": n7(m[13:17]), "crc": n7(m[17:22]), "name": bytes(m[22:38]).split(b"\0")[0].decode("ascii", "replace")}
+            "area": n7(m[13:17]), "crc": n7(m[17:22]), "name": bytes(m[22:38]).split(b"\0")[0].decode("ascii", "replace"),
+            "caps": m[38] if len(m) >= 40 else 1}
 
 
 class Link:

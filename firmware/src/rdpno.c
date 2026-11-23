@@ -24,9 +24,12 @@
  * 44.1 kHz, then fx.c. Integers only (docs/RULES.md). */
 #include <stdint.h>
 static void app_idle(void);
+#ifndef DINGHY_HOST                             /* the web pages' SysEx (sysex.c): the editor; the ROMs (romload.c) */
+#define SX_EDITOR 1
+static int app_sysex(const uint8_t *p, uint32_t n);
+#define APP_SYSEX app_sysex
+#endif
 #if RDP_ROMS_IN_FLASH                           /* the ROMs come from the load page (romload.c) */
-static int rl_sysex(const uint8_t *p, uint32_t n);
-#define APP_SYSEX rl_sysex
 #ifndef RDP_LOAD_URL
 #define RDP_LOAD_URL "R-JEB.GITHUB.IO/RDPNO-FM1"  /* (the load page: docs/load/, GitHub Pages) */
 #endif
@@ -40,6 +43,9 @@ static int rl_sysex(const uint8_t *p, uint32_t n);
 #define RDP_SPLIT_WAIT() cpu1_wait()
 #include "rdp.c"
 #include "fx.c"
+#ifndef DINGHY_HOST
+#include "sysex.c"
+#endif
 #if RDP_ROMS_IN_FLASH
 #include "romload.c"
 #endif
@@ -242,14 +248,14 @@ static uint8_t *val_ptr(uint32_t v)
     default: return &set.fx.width;
     }
 }
+static const uint8_t VAL_LO[V_NONE] = {0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 4};
+static const uint8_t VAL_HI[V_NONE] = {15, FX_NLEVEL - 1u, FX_NLEVEL - 1u, 127, 15, 15, 15, 15, FX_NMIDF - 1u,
+                                       FX_NLEVEL - 1u, FX_NWIDTH - 1u, RDP_VOICES_MAX};
 static void val_turn(uint32_t v, int32_t e)     /* a knob turned e detents */
 {
-    static const uint8_t LO[V_NONE] = {0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 4};
-    static const uint8_t HI[V_NONE] = {15, FX_NLEVEL - 1u, FX_NLEVEL - 1u, 127, 15, 15, 15, 15, FX_NMIDF - 1u, FX_NLEVEL - 1u,
-                                       FX_NWIDTH - 1u, RDP_VOICES_MAX};
     uint8_t *p = val_ptr(v);
     int32_t x = (int32_t)*p + (v == V_VEL ? 4 * e : e);
-    *p = (uint8_t)(x < LO[v] ? LO[v] : x > HI[v] ? HI[v] : x);
+    *p = (uint8_t)(x < VAL_LO[v] ? VAL_LO[v] : x > VAL_HI[v] ? VAL_HI[v] : x);
 }
 
 static char *put(char *p, const char *s) { while (*s) *p++ = *s++; return p; }
@@ -375,6 +381,52 @@ static void app_idle(void)
     if (idle_ok) midi_in();
 }
 
+#ifdef SX_EDITOR
+/* the editor page (site/edit/; sysex.c 20 get, 22 set): the settings, in its order; set as the knobs set them */
+enum { E_PATCH, E_VOL, E_VOICES, E_BASS, E_MLEVEL, E_MFREQ, E_WIDTH, E_TREBLE, E_TRATE, E_TDEPTH, E_CHOTYPE,
+       E_CRATE, E_CDEPTH, E_CH, E_OCT, E_VEL, E_N };
+static const uint8_t E_VAL[E_N] = {V_NONE, V_VOL, V_VOICES, V_BASS, V_MLEVEL, V_MFREQ, V_WIDTH, V_TREBLE, V_TRATE,
+                                   V_TDEPTH, V_NONE, V_CRATE, V_CDEPTH, V_NONE, V_NONE, V_VEL};
+static uint32_t ed_changed, ed_hot = V_NONE;    /* for the main loop: save it; the value to show */
+static void ed_get(const uint8_t *echo)
+{
+    uint8_t d[E_N];
+    uint32_t i;
+    for (i = 0; i < E_N; i++) d[i] = E_VAL[i] != V_NONE ? *val_ptr(E_VAL[i]) : 0u;
+    d[E_PATCH] = (uint8_t)(want_patch != 0xFFu ? want_patch : set.patch);
+    d[E_CHOTYPE] = set.fx.cho_type;
+    d[E_CH] = set.ch;
+    d[E_OCT] = (uint8_t)((int8_t)set.oct + 2);
+    sx_reply_bytes(0x20, echo, d, E_N);
+}
+static void ed_set(const uint8_t *p, uint32_t n, const uint8_t *echo)
+{
+    uint32_t i, bad = 0, fx = 0;
+    for (i = 0; i + 1u < n; i += 2u) {
+        uint32_t id = p[i], v = p[i + 1u], w = id < E_N ? E_VAL[id] : V_NONE;
+        if (id >= E_N) { bad = 1; continue; }
+        if (w != V_NONE) {
+            if (v < VAL_LO[w] || v > VAL_HI[w]) { bad = 1; continue; }
+            *val_ptr(w) = (uint8_t)v;
+            if (w == V_VOICES) rdp_voices = v;
+            else if (w != V_VEL) fx = 1;
+            ed_hot = w;
+        } else if (id == E_PATCH) {
+            if (v < rdp_npatch) want_patch = v; else bad = 1;
+        } else if (id == E_CHOTYPE) {
+            if (v <= FX_SPACED) { set.fx.cho_type = (uint8_t)v; fx = 1; } else bad = 1;
+        } else if (id == E_CH) {
+            if (v <= 16u) set.ch = (uint8_t)v; else bad = 1;
+        } else {                                /* E_OCT: 0..4 for -2..+2 */
+            if (v <= 4u) set.oct = (uint8_t)((int32_t)v - 2); else bad = 1;
+        }
+    }
+    if (fx) fx_set(&set.fx);
+    ed_changed = 1;
+    sx_reply(0x22, bad, echo, 0, 0, 0);
+}
+#endif
+
 #if RDP_ROMS_IN_FLASH
 static void rl_stop_sound(void) { rdp_ready = 0; }   /* (the render stops: silence) */
 static void rl_restart(void)                    /* loaded and checked: start again with it */
@@ -461,6 +513,19 @@ static void app_main(void)
             lcd_fill(0, 0, 240, 240, C_BLACK);
             patch_drawn = page_drawn = midi_drawn = load_drawn = leds_set = ~0u;
             for (k = 0; k < 4u; k++) rows_drawn[k] = ~0u;
+        }
+#endif
+
+#ifdef SX_EDITOR
+        if (ed_changed) {                       /* the editor page set something: kept 2 s later, shown on its page */
+            ed_changed = 0;
+            dirty = 1; t_change = fm1_ms;
+            if (ed_hot != V_NONE) {
+                for (k = 0; k < PG_N * 4u; k++)
+                    if (PAGE_ROW[k / 4u][k % 4u] == ed_hot) set.page = (uint8_t)(k / 4u);
+                hot = ed_hot;
+                ed_hot = V_NONE;
+            }
         }
 #endif
 

@@ -189,7 +189,7 @@ const RomLoad = (() => {
   }
   function frame(cmd, body = []) {
     let b = [cmd, ...body];
-    if (cmd >= 0x10 && cmd <= 0x12) { const s = b.reduce((a, x) => a + x, 0); b = [...b, s & 0x7F, (s >> 7) & 0x7F]; }
+    if (cmd >= 0x10) { const s = b.reduce((a, x) => a + x, 0); b = [...b, s & 0x7F, (s >> 7) & 0x7F]; }
     return [0xF0, ...HEAD, ...b, 0xF7];
   }
   function loadFrames(pk) {
@@ -202,7 +202,8 @@ const RomLoad = (() => {
   function parseHello(d) {
     if (d.length < 39) return null;
     return {pack: !!d[10], set: d[10] ? SETNAME[d[11]] : null, patches: d[12], area: n7(d.slice(13, 17)),
-            crc: n7(d.slice(17, 22)) >>> 0, name: String.fromCharCode(...d.slice(22, 38)).replace(/\0.*$/, "")};
+            crc: n7(d.slice(17, 22)) >>> 0, name: String.fromCharCode(...d.slice(22, 38)).replace(/\0.*$/, ""),
+            caps: d.length >= 40 ? d[38] : 1};           // bit 0 loads ROMs, bit 1 the editor (RDPNO 0.2: the loader only)
   }
   const isOurs = (d, cmd) => d.length >= 7 && d[0] === 0xF0 && d[1] === HEAD[0] && d[2] === HEAD[1] && d[3] === HEAD[2] &&
                              d[4] === 0x7F && d[5] === cmd;
@@ -219,7 +220,7 @@ const RomLoad = (() => {
     }
     once(f, ms) {
       return new Promise((resolve, reject) => {
-        const cmd = f[4], echo = cmd >= 0x10 && cmd <= 0x12 ? [f[f.length - 3], f[f.length - 2]] : null;
+        const cmd = f[4], echo = cmd >= 0x10 ? [f[f.length - 3], f[f.length - 2]] : null;
         this.waiting = {cmd, echo, resolve, timer: setTimeout(() => { this.waiting = null; reject(new Error("no answer from the FM-1")); }, ms)};
         try { this.o.send(f); } catch (err) { clearTimeout(this.waiting.timer); this.waiting = null; reject(err); }
       });
@@ -241,6 +242,9 @@ const RomLoad = (() => {
       throw last;
     }
     close() { this.i.onmidimessage = null; }
+    /* the editor (sysex.c 20, 22): the settings as bytes in the editor's order; set [[setting, value], ...] */
+    async get() { const a = await this.checked(frame(0x20), 1500); return a.slice(9, a.length - 1); }
+    async set(pairs) { await this.checked(frame(0x22, pairs.flat()), 1500); }
     /* the pack, with progress(fraction); resolves when the FM-1 has checked it (it then restarts) */
     async load(pk, progress = () => {}) {
       if (this.info && this.info.area && pk.length > this.info.area)

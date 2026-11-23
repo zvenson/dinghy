@@ -1,0 +1,323 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     RDPNO for the FM-1: the editor. Reads the FM-1's settings over USB MIDI and sends every change as it is made
+     (firmware/src/sysex.c 20 get, 22 set; rdpno.c ed_get / ed_set); the FM-1 keeps them itself, 2 s after the last
+     change, as for its own knobs. Setups are kept in this browser (localStorage) and as files. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edit · RDPNO</title>
+<link rel="stylesheet" href="../site.css">
+<style>
+  main.wide { max-width: 1120px; }
+  .row3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .row2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+  .voices { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .voice { font: inherit; text-align: left; min-height: 56px; padding: 10px 12px; border-radius: 8px; color: var(--fg); background: var(--bg);
+           border: 1px solid var(--line); cursor: pointer; font-weight: 400; }
+  .voice[aria-pressed=true] { border: 2px solid var(--hi); padding: 9px 11px; }
+  .voice small { display: block; font-size: 12px; color: var(--dim); }
+  .voice b { display: block; letter-spacing: .03em; }
+  .k { display: flex; flex-direction: column; gap: 4px; }
+  .k .t { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+  .k .t b { font-variant-numeric: tabular-nums; color: #fff; }
+  .note { color: var(--dim); font-size: 12px; }
+  .card { display: flex; flex-direction: column; gap: 14px; margin: 0 0 16px; }
+  .row3, .row2 { margin: 0 0 16px; }
+  .row3 > .card, .row2 > .card { margin: 0; }
+  .eqrow { display: flex; flex-wrap: wrap; gap: 16px; align-items: stretch; }
+  .band { flex: 1 1 140px; display: flex; flex-direction: column; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  .band b { font-variant-numeric: tabular-nums; color: #fff; }
+  .mid { flex: 3 1 360px; display: flex; gap: 36px; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 8px; padding: 12px 18px; }
+  .mid .hs { flex: 0 1 280px; display: flex; flex-direction: column; gap: 18px; }
+  #eq { width: 100%; height: auto; display: block; background: var(--bg); border-radius: 8px; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { flex: 1; border-radius: 0; background: var(--bg); color: var(--dim); font-weight: 400; letter-spacing: .05em; min-height: 40px; }
+  .seg button[aria-pressed=true] { background: var(--hi); color: #061217; font-weight: 600; }
+  .later { border: 1px dashed var(--line); border-radius: 10px; padding: 18px 20px; color: var(--dim); }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); flex: none; }
+  .dot.on { background: var(--hi); }
+  .setups { list-style: none; padding: 0; margin: 0; }
+  .setups li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .setups li span small { color: var(--dim); }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; }
+  label.sel { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+  section h2 { margin-bottom: 0; }
+  .head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: contents; }
+</style>
+</head>
+<body>
+<main class="wide">
+  <p class="nav"><a href="../" class="logo">RDPNO</a> · <a href="../install/">Install</a> · <a href="../load/">Load the ROMs</a> · <b>Edit</b> · <a href="../screens/">The screens</a></p>
+  <div class="head" style="margin-bottom: 14px"><h1 style="margin: 0">Edit <span class="logo">RDPNO</span></h1>
+    <p class="small" style="margin: 0">Every change goes to the FM-1 as you make it; it keeps it itself.</p></div>
+
+  <section class="bar">
+    <span class="dot" id="dot" aria-hidden="true"></span>
+    <span id="cstat" style="flex: 1 1 260px" role="status">Not connected. Chrome or Edge, the FM-1 by USB, running RDPNO.</span>
+    <button id="read" class="plain" hidden>Read from the FM-1</button>
+    <button id="connect">Connect to the FM-1</button>
+  </section>
+
+  <fieldset id="all" disabled>
+  <section class="card">
+    <h2>Voice</h2>
+    <div class="voices" id="voices"></div>
+  </section>
+
+  <section class="row3" style="background: var(--panel)">
+    <label class="k"><span class="t"><span>Voice level</span><b id="v1"></b></span><input type="range" id="p1" min="0" max="15" data-e="1"></label>
+    <label class="k"><span class="t"><span>Voices <span class="note">notes at once</span></span><b id="v2"></b></span><input type="range" id="p2" min="4" max="10" data-e="2"></label>
+    <label class="k"><span class="t"><span>Tuning <span class="note">A4 · later</span></span><b>440 Hz</b></span><input type="range" min="430" max="450" value="440" disabled></label>
+  </section>
+
+  <section class="card">
+    <div class="head"><h2>Equalizer</h2><button class="plain" id="flat">Flat</button></div>
+    <svg id="eq" viewBox="0 0 1000 240" role="img" aria-label="The equalizer's curve"></svg>
+    <div class="eqrow">
+      <div class="band"><span>Bass <span class="note">200 Hz</span></span><div class="fader"><input type="range" id="p3" min="0" max="14" data-e="3" aria-label="Bass level"></div><b id="v3"></b></div>
+      <div class="mid">
+        <div class="band" style="border: 0; flex: none; padding: 0"><span>Mid</span><div class="fader"><input type="range" id="p4" min="0" max="14" data-e="4" aria-label="Middle level"></div><b id="v4"></b></div>
+        <div class="hs">
+          <label class="k"><span class="t"><span>Mid frequency</span><b id="v5"></b></span><input type="range" id="p5" min="0" max="7" data-e="5"></label>
+          <label class="k"><span class="t"><span>Band width <span class="note">wide … narrow</span></span><b id="v6"></b></span><input type="range" id="p6" min="0" max="7" data-e="6"></label>
+        </div>
+      </div>
+      <div class="band"><span>Treble <span class="note">4 kHz</span></span><div class="fader"><input type="range" id="p7" min="0" max="14" data-e="7" aria-label="Treble level"></div><b id="v7"></b></div>
+    </div>
+    <p class="note" style="margin: 0">Shelving filters at 200 Hz and 4 kHz (half their level there, at most about 3.5 dB per octave), a peak in the middle. Shaded: above 10 kHz the board has no sound.</p>
+  </section>
+
+  <div class="row3">
+    <section class="card">
+      <h2>Tremolo</h2>
+      <label class="k"><span class="t"><span>Rate</span><b id="v8"></b></span><input type="range" id="p8" min="1" max="15" data-e="8"></label>
+      <label class="k"><span class="t"><span>Depth</span><b id="v9"></b></span><input type="range" id="p9" min="0" max="15" data-e="9"></label>
+      <p class="note" style="margin: 0">Stereo: the sides swing in antiphase. 1.5 dB a step.</p>
+    </section>
+    <section class="card">
+      <h2>Chorus</h2>
+      <div class="seg" role="group" aria-label="Chorus type">
+        <button type="button" id="spaced" aria-pressed="true">SPACE-D</button><button type="button" id="bbd" aria-pressed="false">BBD</button>
+      </div>
+      <label class="k"><span class="t"><span>Rate</span><b id="v11"></b></span><input type="range" id="p11" min="1" max="15" data-e="11"></label>
+      <label class="k"><span class="t"><span>Depth</span><b id="v12"></b></span><input type="range" id="p12" min="0" max="15" data-e="12"></label>
+    </section>
+    <div class="later">
+      <h2>Phaser <span style="text-transform: none; letter-spacing: 0; font-weight: 400">· later</span></h2>
+      <p class="small" style="margin: 0">Room for a phaser, as the MK-80 has one.</p>
+    </div>
+  </div>
+
+  <div class="row2">
+    <section class="card">
+      <h2>MIDI and keys</h2>
+      <div class="btns" style="gap: 16px">
+        <label class="sel">Receive channel <select id="p13" data-e="13"></select></label>
+        <label class="sel">Octave of the keys <select id="p14" data-e="14"></select></label>
+      </div>
+      <label class="k"><span class="t"><span>Key velocity <span class="note">the FM-1's own keys</span></span><b id="v15"></b></span><input type="range" id="p15" min="1" max="127" data-e="15"></label>
+      <p class="note" style="margin: 0">The volume stays on the FM-1's MASTER knob.</p>
+    </section>
+    <section class="card">
+      <h2>Your setups <span style="text-transform: none; letter-spacing: 0; font-weight: 400">(in this browser)</span></h2>
+      <ul class="setups" id="setups"></ul>
+      <div class="btns">
+        <input id="sname" placeholder="Name of this setup" aria-label="Name of this setup" style="font: inherit; flex: 1 1 160px; min-height: 40px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px">
+        <button type="button" id="keep">Keep this setup</button>
+      </div>
+      <div class="btns">
+        <button type="button" class="plain" id="export">Export file</button>
+        <label class="plain" style="border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer">Import file <input type="file" id="import" accept=".json,application/json" hidden></label>
+      </div>
+    </section>
+  </div>
+  </fieldset>
+  <p class="status" id="status" role="status"></p>
+</main>
+<footer>
+  <p class="small">RDPNO is free software (GPL-3.0): <a href="https://github.com/R-Jeb/rdpno-fm1">github.com/R-Jeb/rdpno-fm1</a>.
+    Roland, MKS-20, Rhodes and MK-80 are trademarks of their owners, M-VAVE and FM-1 of theirs.</p>
+</footer>
+<script src="../romload.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+/* the settings, in the firmware's order (rdpno.c E_*) */
+const E = {PATCH: 0, VOL: 1, VOICES: 2, BASS: 3, MLEVEL: 4, MFREQ: 5, WIDTH: 6, TREBLE: 7, TRATE: 8, TDEPTH: 9, CHOTYPE: 10,
+           CRATE: 11, CDEPTH: 12, CH: 13, OCT: 14, VEL: 15, N: 16};
+const DEFAULTS = [0, 15, 8, 7, 7, 3, 3, 7, 8, 0, 1, 8, 0, 0, 2, 100];
+const MIDF = [400, 560, 770, 1000, 1400, 2000, 2800, 4000], MIDN = ["400 Hz", "560 Hz", "770 Hz", "1 kHz", "1.4 kHz", "2 kHz", "2.8 kHz", "4 kHz"];
+const WQ = [0.35, 0.5, 0.7, 1.0, 1.4, 2.0, 2.8, 4.0];
+const dbOf = (i) => (i - 7) * 1.5, db = (i) => { const d = dbOf(i); return (d > 0 ? "+" : "") + d.toFixed(1) + " dB"; };
+const off = (x) => (x ? String(x) : "off");
+const SHOW = {1: String, 2: String, 3: db, 4: db, 5: (i) => MIDN[i], 6: (i) => String(i + 1), 7: db, 8: String, 9: off, 11: String, 12: off, 15: String};
+let v = DEFAULTS.slice(), midi = null, link = null, setKey = null, lastTouch = 0;
+
+for (let c = 0; c <= 16; c++) $("p13").append(new Option(c ? String(c) : "OMNI", c));
+for (let o = 0; o <= 4; o++) $("p14").append(new Option((o > 2 ? "+" : "") + (o - 2), o));
+
+/* ---- the equalizer's curve: the analog shelves (Q 0.5) and the bell, as the firmware's filters (gen_fx_tables.py) */
+function mag(nr, ni, dr, di) { return Math.sqrt((nr * nr + ni * ni) / (dr * dr + di * di)); }
+function shelf(f, f0, g, high) {
+  const A = 10 ** (g / 40), w = f / f0, k = Math.sqrt(A) / 0.5, re = -w * w;
+  return 20 * Math.log10(A * (high ? mag(A * re + 1, k * w, re + A, k * w) : mag(re + A, k * w, A * re + 1, k * w)));
+}
+function bell(f, f0, g, q) { const A = 10 ** (g / 40), w = f / f0, re = 1 - w * w; return 20 * Math.log10(mag(re, w * A / q, re, w / (A * q))); }
+const total = (f) => shelf(f, 200, dbOf(v[E.BASS]), false) + shelf(f, 4000, dbOf(v[E.TREBLE]), true) + bell(f, MIDF[v[E.MFREQ]], dbOf(v[E.MLEVEL]), WQ[v[E.WIDTH]]);
+function drawEq() {
+  const X0 = 44, X1 = 992, LO = Math.log10(20), HI = Math.log10(20000);
+  const x = (f) => X0 + (Math.log10(f) - LO) / (HI - LO) * (X1 - X0), y = (d) => 112 - Math.max(-16, Math.min(16, d)) * (100 / 15);
+  let s = "", c = "";
+  for (const [f, l] of [[20, "20"], [50, "50"], [100, "100"], [200, "200"], [500, "500"], [1000, "1k"], [2000, "2k"], [5000, "5k"], [10000, "10k"], [20000, "20k"]])
+    s += `<line x1="${x(f)}" y1="10" x2="${x(f)}" y2="214" stroke="#20262a"/><text x="${x(f)}" y="232" fill="#9aa5ab" font-size="13" text-anchor="${f === 20000 ? "end" : f === 20 ? "start" : "middle"}">${l}</text>`;
+  for (const d of [12, 6, 0, -6, -12])
+    s += `<line x1="44" y1="${y(d)}" x2="992" y2="${y(d)}" stroke="${d ? "#20262a" : "#3a434a"}"/><text x="38" y="${y(d) + 4}" fill="#9aa5ab" font-size="13" text-anchor="end">${d > 0 ? "+" : ""}${d}</text>`;
+  s += `<rect x="${x(10000)}" y="10" width="${X1 - x(10000)}" height="204" fill="#171b1e" opacity="0.6"/>`;
+  for (let i = 0; i <= 240; i++) { const f = 10 ** (LO + (HI - LO) * i / 240); c += (i ? " L " : "M ") + x(f).toFixed(1) + " " + y(total(f)).toFixed(1); }
+  s += `<path d="${c} L ${X1} ${y(0)} L ${X0} ${y(0)} Z" fill="#5ac8e6" opacity="0.12"/><path d="${c}" fill="none" stroke="#5ac8e6" stroke-width="3" stroke-linejoin="round"/>`;
+  for (const [f, l] of [[200, "BASS"], [MIDF[v[E.MFREQ]], "MID"], [4000, "TREBLE"]]) {
+    const yy = y(total(f));
+    s += `<circle cx="${x(f)}" cy="${yy}" r="7" fill="#0e1113" stroke="#fff" stroke-width="2.5"/><text x="${x(f)}" y="${yy > 60 ? yy - 14 : yy + 26}" fill="#fff" font-size="13" text-anchor="middle">${l}</text>`;
+  }
+  $("eq").innerHTML = s;
+  $("eq").setAttribute("aria-label", `The equalizer's curve: bass ${db(v[E.BASS])}, mid ${db(v[E.MLEVEL])} at ${MIDN[v[E.MFREQ]]}, treble ${db(v[E.TREBLE])}`);
+}
+
+/* ---- the page from v */
+function voiceList() {
+  const s = setKey && RomLoad.SETS[setKey];
+  $("voices").innerHTML = "";
+  if (!s) { $("voices").innerHTML = `<p class="small" style="margin: 0">${link ? "The FM-1 holds no ROMs: load them first." : "Connect to see the voices."}</p>`; return; }
+  s.patches.forEach(([name, , khz, num], i) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "voice"; b.setAttribute("aria-pressed", String(i === v[E.PATCH]));
+    b.innerHTML = `<small>VOICE ${num} · ${khz} kHz</small><b>${name}</b>`;
+    b.onclick = () => change(E.PATCH, i);
+    $("voices").append(b);
+  });
+}
+function show() {
+  for (const [e, f] of Object.entries(SHOW)) { $("p" + e).value = v[e]; $("v" + e).textContent = f(v[e]); }
+  $("p13").value = v[E.CH]; $("p14").value = v[E.OCT];
+  $("spaced").setAttribute("aria-pressed", String(v[E.CHOTYPE] === 1)); $("bbd").setAttribute("aria-pressed", String(v[E.CHOTYPE] === 0));
+  [...$("voices").children].forEach((b, i) => b.setAttribute && b.setAttribute("aria-pressed", String(i === v[E.PATCH])));
+  drawEq();
+}
+
+/* ---- to the FM-1: the changes gathered, one frame at a time (the link answers one frame at a time) */
+const pending = new Map();
+let sending = false;
+function change(e, value) {
+  v[e] = value; lastTouch = Date.now(); show();
+  if (!link) return;
+  pending.set(e, value);
+  if (!sending) flush();
+}
+async function flush() {
+  sending = true;
+  try {
+    while (pending.size && link) {
+      const pairs = [...pending.entries()];
+      pending.clear();
+      await link.set(pairs);
+      $("status").textContent = "Sent to the FM-1.";
+    }
+  } catch (err) { lost(err); }
+  sending = false;
+}
+function setAll(vals) { vals.forEach((x, e) => { if (x !== v[e]) { v[e] = x; pending.set(e, x); } }); show(); if (link && !sending) flush(); }
+for (const el of document.querySelectorAll("[data-e]")) {
+  const e = Number(el.dataset.e);
+  el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => change(e, Number(el.value)));
+}
+$("spaced").onclick = () => change(E.CHOTYPE, 1);
+$("bbd").onclick = () => change(E.CHOTYPE, 0);
+$("flat").onclick = () => setAll(v.map((x, e) => (e === E.BASS || e === E.TREBLE || e === E.MLEVEL ? 7 : x)));
+
+/* ---- the connection */
+function lost(err) {
+  if (link) link.close();
+  link = null;
+  $("dot").classList.remove("on"); $("all").disabled = true; $("read").hidden = true; $("connect").hidden = false;
+  $("cstat").textContent = `The FM-1 stopped answering (${err.message}). Connect again.`;
+}
+async function readBack() {
+  const d = await link.get();
+  if (d.length >= E.N) { v = d.slice(0, E.N); show(); }
+}
+$("connect").onclick = async () => {
+  try {
+    if (!navigator.requestMIDIAccess) throw new Error("this browser has no Web MIDI: use Chrome or Edge");
+    try { midi = midi || await navigator.requestMIDIAccess({sysex: true}); }
+    catch (_) { throw new Error("the browser did not allow MIDI with SysEx: allow it and try again"); }
+    $("cstat").textContent = "Looking for the FM-1…";
+    link = await RomLoad.find(midi);
+    if (!link) throw new Error("no FM-1 running RDPNO answered. Connected by USB, not in use by another page or app?");
+    if (!(link.info.caps & 2)) { link.close(); link = null; throw new Error("this RDPNO has no editor yet: install the latest version first"); }
+    setKey = Object.keys(RomLoad.SETS).find((k) => RomLoad.SETS[k].label === link.info.set) || null;
+    await readBack();
+    voiceList(); show();
+    $("dot").classList.add("on"); $("all").disabled = false; $("read").hidden = false; $("connect").hidden = true;
+    $("cstat").innerHTML = link.info.pack ? `Connected to the FM-1. It holds <b>${link.info.set}</b>, ${link.info.patches} voices.` : "Connected to the FM-1. It holds no ROMs yet.";
+    $("status").textContent = "Live: changes are sent as you move them.";
+  } catch (err) { $("cstat").textContent = err.message; }
+};
+$("read").onclick = async () => { try { await readBack(); $("status").textContent = "Read from the FM-1: these are its settings now."; } catch (err) { lost(err); } };
+/* the FM-1's own knobs: read now and then, while nothing is being changed here */
+setInterval(async () => {
+  if (!link || sending || pending.size || Date.now() - lastTouch < 1500 || document.hidden || document.activeElement?.type === "range") return;
+  try { await readBack(); } catch (err) { lost(err); }
+}, 1500);
+
+/* ---- setups: kept in this browser, exported and imported as files */
+const KEY = "rdpno-setups";
+function setups() { try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (_) { return []; } }
+function keepSetups(list) { try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (_) { $("status").textContent = "This browser does not keep setups (private window?)."; } }
+function summary(s) {
+  const set = s.set && RomLoad.SETS[s.set], name = set && set.patches[s.values[E.PATCH]] ? set.patches[s.values[E.PATCH]][0] : "voice " + (s.values[E.PATCH] + 1);
+  return `${name}, ${s.values[E.CHOTYPE] ? "Space-D" : "BBD"} ${s.values[E.CRATE]}/${s.values[E.CDEPTH]}`;
+}
+function listSetups() {
+  const ul = $("setups");
+  ul.innerHTML = "";
+  const list = setups();
+  if (!list.length) { ul.innerHTML = '<li class="small">None yet: give this setup a name and keep it.</li>'; return; }
+  list.forEach((s, i) => {
+    const li = document.createElement("li"), t = document.createElement("span"), b = document.createElement("span"), send = document.createElement("button"), del = document.createElement("button");
+    t.innerHTML = "<span></span> · <small></small>"; t.firstChild.textContent = s.name; t.lastChild.textContent = summary(s);
+    send.type = del.type = "button"; send.className = del.className = "plain"; send.textContent = "Send"; del.textContent = "Delete";
+    send.onclick = () => { setAll(s.values.slice(0, E.N)); $("status").textContent = `${s.name}: sent to the FM-1.`; };
+    del.onclick = () => { const l = setups(); l.splice(i, 1); keepSetups(l); listSetups(); };
+    b.className = "btns"; b.append(send, del); li.append(t, b); ul.append(li);
+  });
+}
+$("keep").onclick = () => {
+  const name = $("sname").value.trim() || `Setup ${setups().length + 1}`;
+  const list = setups().filter((s) => s.name !== name);
+  list.push({name, set: setKey, values: v.slice()});
+  keepSetups(list); $("sname").value = ""; listSetups();
+};
+$("export").onclick = () => {
+  const blob = new Blob([JSON.stringify({rdpno_setups: 1, setups: setups()}, null, 1)], {type: "application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "rdpno-setups.json"; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$("import").onchange = async (e) => {
+  try {
+    const j = JSON.parse(await e.target.files[0].text());
+    const got = (j.setups || []).filter((s) => s && typeof s.name === "string" && Array.isArray(s.values) && s.values.length >= E.N);
+    const list = setups().filter((s) => !got.some((g) => g.name === s.name)).concat(got);
+    keepSetups(list); listSetups();
+    $("status").textContent = `${got.length} setups imported.`;
+  } catch (_) { $("status").textContent = "That file holds no RDPNO setups."; }
+};
+
+voiceList(); show(); listSetups();
+</script>
+</body>
+</html>

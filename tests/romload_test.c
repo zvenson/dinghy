@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * RDPNO's ROM loader (firmware/src/romload.c) on a fake flash, fed the frames tools/fm1_romload.py makes:
+ * RDPNO's ROM loader (firmware/src/romload.c, sysex.c) on a fake flash, fed the frames tools/fm1_romload.py makes:
  *   tools/fm1_romload.py frames PACK FRAMES && cc -Ifirmware/src -o romload_test tests/romload_test.c
  *   ./romload_test PACK FRAMES
  * A load as the page sends it (the pack in the flash, checked, the restart asked); frames sent twice; a frame out of
@@ -40,6 +40,7 @@ static int fl_write(uint32_t off, const uint8_t *s, uint32_t n)
 }
 static void fl_inval(uint32_t off, uint32_t n) { (void)off; (void)n; }
 static const uint8_t *fm1_xip_ptr(uint32_t off) { return flash + off; }
+#include "sysex.c"
 #include "romload.c"
 static void rl_stop_sound(void) { stopped++; }
 static void rl_restart(void) { restarted++; }
@@ -51,16 +52,16 @@ static int feed(const uint8_t *f, uint32_t n)           /* one frame F0..F7; the
 {
     reply_n = 0;
     fm1_ms += 2;
-    if (!rl_sysex(f + 1, n - 2)) return -2;
+    if (!app_sysex(f + 1, n - 2)) return -2;
     if (reply_n < 9 || reply[0] != 0xF0 || reply[4] != 0x7F || reply[5] != f[4]) return -1;
     return reply[6];
 }
 static int hello(uint32_t *has, uint32_t *crc, char *name)
 {
     static const uint8_t H[6] = {0xF0, 0x7D, 0x52, 0x44, 0x01, 0xF7};
-    if (feed(H, 6) != 0 || reply_n != 39) return -1;
+    if (feed(H, 6) != 0 || reply_n != 40) return -1;
     *has = reply[10];
-    *crc = rl_u7(reply + 17, 5);
+    *crc = sx_u7(reply + 17, 5);
     memcpy(name, reply + 22, 16);
     name[16] = 0;
     return 0;

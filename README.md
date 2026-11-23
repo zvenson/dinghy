@@ -16,7 +16,8 @@ from flash, and plays it from the keys and MIDI.
 > the FM-1 connected by USB). That firmware holds **no Roland data**: the ROMs are Roland's, so you load **your own
 > dumps** into the FM-1 from the [load page](https://r-jeb.github.io/rdpno-fm1/load/), one set at a time (MKS-20 A,
 > MKS-20 B or MK-80). The page makes the ROM pack in the browser; nothing leaves your computer except to the FM-1. A
-> firmware update clears the ROMs; the installer loads them again in the same go. What the three pages show:
+> firmware update clears the ROMs; the installer loads them again in the same go. Everything the panel sets can also be
+> set from the browser, live: the [editor](https://r-jeb.github.io/rdpno-fm1/edit/). What the three pages show:
 > [the screens](https://r-jeb.github.io/rdpno-fm1/screens/).
 >
 > You can still build RDPNO yourself with the ROMs built in ([Build it yourself](#build-it-yourself)); please do not

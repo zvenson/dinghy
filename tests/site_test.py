@@ -4,7 +4,8 @@
 the front page and the screens load without errors; the load page finds a fake FM-1 (tests/fake_midi.js), takes the
 ROM files, loads MKS-20 B (frames lost on the way sent again) and the fake FM-1 holds it; the installer takes the
 package, asks for the ROMs in its own step (the pack kept from the load page offered first), makes the MK-80's pack and
-keeps it, then finds no FM-1 to update (the fake one has no updater).
+keeps it, then finds no FM-1 to update (the fake one has no updater); the editor reads the fake FM-1's settings and
+sends a slider and a voice to it.
 
   tests/site_test.py SITE_DIR [ROMS_DIR]     (without ROMS_DIR: random "ROMs" under rdpiano's names)"""
 import functools
@@ -65,6 +66,20 @@ def main(site, roms=None):
         held = pg.evaluate("fakeFM1.pack && fakeFM1.pack.name")
         if held != "MKS-20 B":
             bad.append(f"the fake FM-1 holds {held!r}")
+        # the editor: it reads the fake FM-1's settings, a slider and a voice go to it, a setup is kept
+        pg.add_init_script("window.fakeFM1.pack = {id: 1, np: 5, crc: 1, name: 'MKS-20 B'}")   # (it held MKS-20 B)
+        pg.goto(url + "/edit/")
+        pg.click("#connect")
+        pg.wait_for_function("document.getElementById('cstat').textContent.startsWith('Connected')")
+        nv = pg.evaluate("document.querySelectorAll('#voices .voice').length")
+        pg.evaluate("const e = document.getElementById('p3'); e.value = 11; e.dispatchEvent(new Event('input'))")
+        pg.click("#voices .voice:nth-child(4)")
+        pg.wait_for_function("fakeFM1.settings[3] === 11 && fakeFM1.settings[0] === 3")
+        pg.fill("#sname", "Test")
+        pg.click("#keep")
+        print("editor:", nv, "voices;", pg.text_content("#v3"), "bass;", pg.text_content("#setups li"))
+        if nv != 5 or pg.text_content("#v3") != "+6.0 dB" or "Test" not in pg.text_content("#setups"):
+            bad.append("the editor")
         pg.goto(url + "/install/")
         pg.wait_for_function("!document.getElementById('go').disabled || document.getElementById('alert').textContent")
         print("installer:", pg.text_content("#status"), pg.text_content("#alert"))
