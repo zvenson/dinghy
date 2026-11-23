@@ -18,13 +18,16 @@ complete source under the same licence too.
 | The HD6301 core in `firmware/src/rdp.c` (the opcode handlers, flag tables, cycle counts) | from [MAME](https://github.com/mamedev/mame)'s m6800 as rdpiano carries it, BSD-3-Clause, copyright-holders Aaron Giles, Nicola Salmoria |
 | The app `firmware/src/rdpno.c`, the effects `firmware/src/fx.c` (the equalizer after Andrew Simper's SVF paper; the chorus rates after rdpiano_juce), `tools/gen_fx_tables.py`, the port, `tests/rdp_*`, `tests/scripts/rdpno.txt` | R-Jeb |
 
+| The ROM loader `firmware/src/romload.c`, its test `romtest.c`, `tools/fm1_romload.py`, `tools/make_site.py`, the site `site/` (but `site/lib/`, `site/install/installer.html`) | R-Jeb; the loader's protocol and pages after [sq80-fm1](https://github.com/leonardolopezchavira/sq80-fm1)'s by Leonardo Lopez Chavira |
+| The web installer: `site/install/installer.html`, `site/lib/fm1ports.js`, `fm1pkg.js`, `fm1ota.js` | from [fm1-base](https://github.com/charlesvestal/fm1-base) (as sq80-fm1 carries it): Copyright (C) 2026 Charles Vestal, Leo Kuroshita (@kurogedelic), Hügelton Instruments, Chris Farrell; **MPL-2.0** (`LICENSES/MPL-2.0.txt`); `installer.html` changed for RDPNO (see its head) |
+
 ## Third-party material
 
 | What | Licence | Where |
 | --- | --- | --- |
 | Terminus font 8x16 (ter-u16n), rendered into `firmware/gen/felucca_font.h` | SIL OFL 1.1 | `assets/fonts/Terminus-LICENSE.txt` |
-| Roland's ROMs (MK-80, MKS-20, RD200 CPU-B program): read at build time from a folder you give (`tools/pack_roms.py`) into `firmware/gen/rdp_rom.h`, which is not in git. A build contains them: they are not under the GPL, and you may not be allowed to share such a build | Roland Corporation, all rights reserved | not in this tree |
-| JieLi AC79 SDK: `uboot.boot`, `cfg_tool.bin`, `eq_cfg_hw.bin` are read from your SDK checkout at build time and placed in the package; no SDK files are in this tree | Apache-2.0 | <https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK> |
+| Roland's ROMs (MK-80, MKS-20, RD200 CPU-B program): read at build time from a folder you give (`tools/pack_roms.py`) into `firmware/gen/rdp_rom.h`, which is not in git. A build contains them: they are not under the GPL, and you may not be allowed to share such a build. The `--romload` build (the one on the site) contains none: the player loads their own (`site/romload.js` knows them only by their SHA-256) | Roland Corporation, all rights reserved | not in this tree, not on the site |
+| JieLi AC79 SDK: `uboot.boot`, `cfg_tool.bin`, `eq_cfg_hw.bin` are read from your SDK checkout at build time and placed in the package; no SDK files are in this tree | Apache-2.0 (`LICENSES/Apache-2.0.txt`, beside the package on the site) | <https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK> |
 
 ## The logo
 

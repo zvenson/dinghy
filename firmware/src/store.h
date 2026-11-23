@@ -39,9 +39,10 @@
 #define SETTINGS_AT 0x000FC000u                 /* (Felucca's globals area) */
 #define BLOBS_AT 0x000F4000u
 #define SLOTS_AT 0x00097000u                    /* (Felucca's main store, FL_DATA) */
-#if RDP_ROMTEST
-/* RDPNO's ROM area test (tools/build.py --romtest, romtest.c): the app slot ends below ROMT_LO, the VM starts at
- * ROMT_HI; the plain XIP window starts at ROMT_LO. The update loader rewrites this area with every update. */
+#if RDP_ROMTEST || RDP_ROMS_IN_FLASH
+/* RDPNO's ROM area (tools/build.py --romload: the ROM pack, romload.c; --romtest: its test, romtest.c): the app
+ * slot ends below ROMT_LO, the VM starts at ROMT_HI; the plain XIP window starts at ROMT_LO. The update loader
+ * rewrites this area with every update. */
 #ifndef ROMT_LO
 #define ROMT_LO 0x0001A000u
 #endif

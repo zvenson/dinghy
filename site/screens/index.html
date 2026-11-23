@@ -1,0 +1,80 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     RDPNO for the FM-1: its three screens. The pictures are RDPNO's own screen, drawn by the host simulator
+     (tests/run_host.sh; there the load shows 0 %). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The screens · RDPNO</title>
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<main>
+  <p class="nav"><a href="../">RDPNO</a> · <a href="../install/">Install</a> · <a href="../load/">Load the ROMs</a> · <b>The screens</b></p>
+  <h1>The screens</h1>
+  <p>RDPNO has three pages, laid out after the MKS-20's front panel: <b>HOME</b>, <b>FX</b> and <b>ENV</b>. Each gives
+    the four knobs (K1..K4) four of the MKS-20's edit parameters. Press <b>HOME</b>, <b>FX</b> or <b>ENV</b>, or turn
+    <b>SELECT</b>, to change the page. The value turned last is shown in white. Everything but the pedal is kept in
+    the FM-1's flash, two seconds after the last change. The settings are the same for every voice.</p>
+
+  <div class="card">
+    <h2>On every page</h2>
+    <table>
+      <tr><th>Top</th><td>The voice (PIANO 1, E-PIANO 2, CLASSIC, ...), below it its number, the set (MKS-20 A, MKS-20 B, MK-80)
+        and the rate the board runs that voice at (20 or 32 kHz). <span class="red">NO ROMS: LOAD THEM AT</span> when the
+        FM-1 holds no ROMs: <a href="../load/">load them</a>.</td></tr>
+      <tr><th>MIDI line</th><td><b>RX-CH</b> the receive channel (OMNI or 1..16), <b>OCT</b> the octave of the keys,
+        <b>SUS</b> while the pedal is down, then <b>2 CORES</b> (the sound chip's work is split over both cores; <b>1 CORE</b>
+        if the second one failed its test). <b>E</b> and a number instead: MIDI messages were lost (every note was
+        released then).</td></tr>
+      <tr><th>Load bar</th><td><b>CPU</b> how much of each audio block the board takes now (the bar; red above 80 %),
+        <b>PEAK</b> the highest of the last two seconds (the white tick), <b>PARTS</b> how many of the sound chip's
+        parts sound. A <b>*</b>: the brake is on, the faintest parts are left out for a moment so that it stays in time.</td></tr>
+    </table>
+    <table>
+      <tr><th>PRESETS</th><td>the voice</td><th>ALGORITHM</th><td>the MIDI receive channel</td></tr>
+      <tr><th>OCT- / OCT+</th><td>the octave of the keys</td><th>PLAY</th><td>the sustain pedal, latched (lit while down)</td></tr>
+      <tr><th>MASTER</th><td>the volume</td><th>MIDI in</th><td>notes, CC 64, CC 120/123, program change (the voice)</td></tr>
+    </table>
+  </div>
+
+  <h3>HOME</h3>
+  <div class="screen"><img src="img/home.png" alt="The HOME page: voice level 15, treble 0.0 dB, bass 0.0 dB, key velocity 100">
+    <div><table>
+      <tr><th>K1</th><td><b>VOICE LEVEL</b> 0..15, the voice's volume.</td></tr>
+      <tr><th>K2</th><td><b>TREBLE LEVEL</b> -10.5..+10.5 dB in 1.5 dB steps: a gentle shelf, its corner at 4 kHz (full at about 10 kHz).</td></tr>
+      <tr><th>K3</th><td><b>BASS LEVEL</b> -10.5..+10.5 dB: a shelf with its corner at 200 Hz (full at about 100 Hz).</td></tr>
+      <tr><th>K4</th><td><b>KEY VELOCITY</b> 1..127: how hard the FM-1's own keys play (they feel none). MIDI notes bring their own.</td></tr>
+    </table></div></div>
+
+  <h3>FX: TREMOLO / CHORUS</h3>
+  <div class="screen"><img src="img/fx.png" alt="The FX page: tremolo rate 10, depth 3, chorus rate 8, depth 4; the title says SPACE-D">
+    <div><table>
+      <tr><th>K1</th><td><b>TREMOLO RATE</b> 1..15.</td></tr>
+      <tr><th>K2</th><td><b>TREMOLO DEPTH</b> 0..15, 0 = off, 1.5 dB a step. A stereo tremolo: the two sides swing in antiphase.</td></tr>
+      <tr><th>K3</th><td><b>CHORUS RATE</b> 1..15.</td></tr>
+      <tr><th>K4</th><td><b>CHORUS DEPTH</b> 0..15, 0 = off.</td></tr>
+      <tr><th>FX</th><td>pressed again on this page: the chorus type, <b>SPACE-D</b> (Roland's digital Dimension-D-style chorus, as rdpiano_juce has it) or <b>BBD</b> (a bucket-brigade-style chorus). The title says which.</td></tr>
+    </table></div></div>
+
+  <h3>ENV: MIDDLE EQ</h3>
+  <div class="screen"><img src="img/env.png" alt="The ENV page: middle frequency 1000 Hz, middle level +3.0 dB, band width 5, voices 8">
+    <div><table>
+      <tr><th>K1</th><td><b>MIDDLE FREQ</b> 400, 560, 770 Hz, 1, 1.4, 2, 2.8 or 4 kHz, as on the MKS-20.</td></tr>
+      <tr><th>K2</th><td><b>MIDDLE LEVEL</b> -10.5..+10.5 dB: a peak at that frequency.</td></tr>
+      <tr><th>K3</th><td><b>BAND WIDTH</b> 1..8, higher is narrower.</td></tr>
+      <tr><th>K4</th><td><b>VOICES</b> 4..10 (8 by default): how many notes the board plays at once, its own voice stealing among them. Fewer: less load (with the pedal down, every key struck keeps a voice).</td></tr>
+    </table></div></div>
+
+  <h3>Loading the ROMs</h3>
+  <p>While the <a href="../load/">load page</a> (or the installer) sends the ROMs, the FM-1 is silent and shows
+    <b>LOADING THE ROMS</b> with the percentage and <b>DO NOT UNPLUG</b>; <span class="red">STOPPED: TRY AGAIN</span> if
+    nothing has come for ten seconds. At the end it shows <b>ROMS LOADED</b>, the set, and restarts with it.</p>
+</main>
+<footer>
+  <p class="small">RDPNO is free software (GPL-3.0): <a href="https://github.com/R-Jeb/rdpno-fm1">github.com/R-Jeb/rdpno-fm1</a>.
+    Roland, MKS-20, Rhodes and MK-80 are trademarks of their owners, M-VAVE and FM-1 of theirs.</p>
+</footer>
+</body>
+</html>

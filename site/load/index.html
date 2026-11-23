@@ -1,0 +1,159 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     RDPNO for the FM-1: the load page. Makes a ROM pack from your own Roland ROM dumps, in the browser, and sends it
+     to the FM-1 over USB MIDI (Web MIDI with SysEx: Chrome or Edge). Nothing leaves your computer except to the FM-1.
+     The pack: tools/pack_roms.py; the protocol: firmware/src/romload.c (tools/fm1_romload.py does the same).
+     After sq80-fm1's loader page (leonardolopezchavira/sq80-fm1, app/loader/index.html). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Load the ROMs · RDPNO</title>
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<main>
+  <p class="nav"><a href="../">RDPNO</a> · <a href="../install/">Install</a> · <b>Load the ROMs</b> · <a href="../screens/">The screens</a></p>
+  <h1>Load the ROMs</h1>
+  <p>RDPNO plays Roland's own sound ROMs, and they are not part of it: this page makes a ROM pack from <b>your own
+    dumps</b> and puts it into the FM-1's flash. One set at a time; loading another replaces it. A firmware update
+    clears it (the installer loads it again in the same go). Chrome or Edge, the FM-1 connected by USB and running RDPNO.</p>
+
+  <section>
+    <h2>1 · Connect</h2>
+    <p>Close other pages and apps that use the FM-1's MIDI first.</p>
+    <p><button id="connect">Connect to the FM-1</button></p>
+    <p class="status" id="cstat" role="status"></p>
+  </section>
+
+  <section>
+    <h2>2 · Your ROM files</h2>
+    <p>Choose the files, all at once if you like: the page takes the ones a set needs, recognised by their content
+      (or by the names <a href="https://github.com/giulioz/rdpiano" target="_blank" rel="noopener">rdpiano</a> gives
+      them). They are read here, in the browser.</p>
+    <p>Each set needs <b>five files</b>: three sound ROMs, one parameter ROM, and the program ROM of the CPU-B board
+      (<code>RD200_B.bin</code>), which every set needs. The list below shows what the chosen set needs and ticks
+      off what you have chosen; the extension does not matter (<code>.bin</code>, <code>.rom</code>).</p>
+    <table class="sets">
+      <tr><th>Set</th><th>Voices</th><th>Sound ROMs</th><th>Parameter ROM</th><th>Program ROM</th></tr>
+      <tr><td>MKS-20 A</td><td>Piano 1, 2, 3</td><td><code>mks20_15179736</code>, <code>…37</code>, <code>…38</code></td><td><code>mks20_15179757</code></td><td><code>RD200_B</code></td></tr>
+      <tr><td>MKS-20 B</td><td>Harpsichord, Clavi, Vibraphone, E-Piano 1, 2</td><td><code>mks20_15179739</code>, <code>…40</code>, <code>…41</code></td><td><code>mks20_15179757</code></td><td><code>RD200_B</code></td></tr>
+      <tr><td>MK-80</td><td>Classic, Special, Blend, Contemporary, A.Piano 1, 2, Clavi, Vibraphone</td><td><code>MK80_IC5</code>, <code>MK80_IC6</code>, <code>MK80_IC7</code></td><td><code>MK80_IC18</code></td><td><code>RD200_B</code></td></tr>
+    </table>
+    <p><input type="file" id="files" multiple> <span class="small">or a folder:</span> <input type="file" id="folder" webkitdirectory></p>
+    <p><label>Set <select id="set"></select></label></p>
+    <div id="need"></div>
+    <p class="status" id="fstat" role="status"></p>
+  </section>
+
+  <section>
+    <h2>3 · Load</h2>
+    <p>About a minute or two. The FM-1 is silent meanwhile, shows LOADING THE ROMS, and restarts with them at the end.
+      Don't unplug it until this page says done.</p>
+    <p><button id="load" disabled>Load the ROMs</button></p>
+    <label class="sr" for="bar">Progress</label>
+    <progress id="bar" max="1" value="0" hidden></progress>
+    <p class="status" id="lstat" role="status"></p>
+  </section>
+
+  <p class="small">Your last pack is kept in this browser (only here), so the installer can load it again after an
+    update. <button class="plain" id="forget">Forget it</button></p>
+</main>
+<footer>
+  <p class="small">RDPNO is free software (GPL-3.0): <a href="https://github.com/R-Jeb/rdpno-fm1">github.com/R-Jeb/rdpno-fm1</a>.
+    No Roland data is on this site. Roland, MKS-20, Rhodes and MK-80 are trademarks of their owners, M-VAVE and FM-1 of theirs.</p>
+</footer>
+<script src="../romload.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const say = (el, text, cls) => { $(el).textContent = text; $(el).className = "status" + (cls ? " " + cls : ""); };
+let midi = null, link = null, got = {files: {}, unknown: []};
+
+for (const [k, s] of Object.entries(RomLoad.SETS)) {
+  const o = document.createElement("option");
+  o.value = k; o.textContent = `${s.label}: ${s.patches.map((p) => p[0]).join(", ")}`;
+  $("set").append(o);
+}
+$("set").value = "mks20a";
+$("need").innerHTML = RomLoad.checklist("mks20a");
+
+function ready() { $("load").disabled = !link || RomLoad.missing($("set").value, got.files).length > 0; }
+function showFiles(auto) {                     /* auto: new files chosen, the set follows them */
+  const have = RomLoad.setsIn(got.files);
+  if (auto) $("set").value = RomLoad.bestSet(got.files, $("set").value);
+  const miss = RomLoad.missing($("set").value, got.files);
+  $("need").innerHTML = RomLoad.checklist($("set").value, got.files);
+  if (!Object.keys(got.files).length && !got.unknown.length) say("fstat", "");
+  else if (miss.length) say("fstat", `${miss.length} of the files above still missing.` + (got.unknown.length ? ` Not recognised: ${got.unknown.join(", ")}` : ""), "bad");
+  else say("fstat", `All files of ${RomLoad.SETS[$("set").value].label} are here.` + (have.length > 1 ? ` (Also complete: ${have.filter((k) => k !== $("set").value).map((k) => RomLoad.SETS[k].label).join(", ")}.)` : ""), "ok");
+  ready();
+}
+async function take(list) {
+  say("fstat", "Reading…");
+  const r = await RomLoad.readFiles(list);
+  Object.assign(got.files, r.files);
+  got.unknown = r.unknown;
+  showFiles(true);
+}
+$("files").onchange = (e) => take(e.target.files);
+$("folder").onchange = (e) => take(e.target.files);
+$("set").onchange = () => showFiles(false);
+
+function holds(info) {
+  return info.pack ? `It holds ${info.set} (${info.patches} voices).` : "It has no ROMs yet.";
+}
+$("connect").onclick = async () => {
+  try {
+    if (!navigator.requestMIDIAccess) throw new Error("this browser has no Web MIDI: use Chrome or Edge");
+    try { midi = await navigator.requestMIDIAccess({sysex: true}); }
+    catch (_) { throw new Error("the browser did not allow MIDI with SysEx: allow it (the icon at the right of the address bar, or Site settings > MIDI devices) and try again"); }
+    say("cstat", "Looking for the FM-1…");
+    if (link) link.close();
+    link = await RomLoad.find(midi);
+    if (!link) throw new Error("no FM-1 running RDPNO answered. Is it connected by USB, running RDPNO (the version that loads ROMs), and not in use by another page or app?");
+    say("cstat", `Connected (${link.o.name}). ${holds(link.info)}`, "ok");
+  } catch (err) { say("cstat", err.message, "bad"); link = null; }
+  ready();
+};
+
+$("load").onclick = async () => {
+  const k = $("set").value;
+  $("load").disabled = true; $("bar").hidden = false; $("bar").value = 0;
+  try {
+    say("lstat", "Making the pack…");
+    await new Promise((r) => setTimeout(r, 30));
+    const pack = RomLoad.makePack(k, got.files), label = RomLoad.SETS[k].label;
+    keep({set: label, pack});
+    const t0 = Date.now();
+    await link.load(pack, (f) => { $("bar").value = f; say("lstat", `Loading ${label}… ${Math.round(100 * f)} %` + (link.resent ? ` (${link.resent} frames sent again)` : "")); });
+    say("lstat", `Loaded and checked in ${Math.round((Date.now() - t0) / 1000)} s. The FM-1 restarts with ${label}…`, "ok");
+    link.close(); link = null;
+    await new Promise((r) => setTimeout(r, 3000));
+    link = await RomLoad.waitFor(midi, 20000);
+    if (link) say("lstat", `Done. ${holds(link.info)}`, "ok");
+    else say("lstat", `Loaded. The FM-1 did not answer again yet: it should play ${label} now.`, "ok");
+  } catch (err) {
+    say("lstat", `Stopped: ${err.message}. Try again; until then the FM-1 has no ROMs (it says NO ROMS).`, "bad");
+  }
+  ready();
+};
+
+/* the last pack, kept in this browser for the installer (install_app.js reads it) */
+function db() {
+  return new Promise((resolve, reject) => {
+    const r = indexedDB.open("rdpno-setup", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("files");
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+async function keep(v) {
+  try { const d = await db(); d.transaction("files", "readwrite").objectStore("files").put(v, "pack"); } catch (_) { /* not kept */ }
+}
+$("forget").onclick = async () => {
+  try { const d = await db(); d.transaction("files", "readwrite").objectStore("files").delete("pack"); $("forget").textContent = "Forgotten"; } catch (_) { /* nothing kept */ }
+};
+</script>
+</body>
+</html>

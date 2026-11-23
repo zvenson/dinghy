@@ -21,14 +21,14 @@ int main(int argc, char **argv)
     rdp_exact = argc > 2 ? (u32)atoi(argv[2]) : 1u;
     rdp_quiet = argc > 3 ? (u32)atoi(argv[3]) : 16u;   /* (16: every part, as librdpiano; the firmware: 10) */
     rdp_voices = argc > 4 ? (u32)atoi(argv[4]) : 16u;  /* (the board's 16; fewer: rdp.c rdp_voices) */
-    if (rdp_init(0)) { fprintf(stderr, "rdp_init failed\n"); return 1; }
+    if (rdp_open(RDP_PACK, sizeof RDP_PACK) || rdp_init(0)) { fprintf(stderr, "rdp_init failed\n"); return 1; }
     f = fopen(argv[1], "wb");
     if (!f) return 1;
     for (t = 0; t < RDP_SCRIPT_END; t++) {
         s32 s;
         for (; e < RDP_SCRIPT_N && RDP_SCRIPT[e].t == t; e++) {
             if (RDP_SCRIPT[e].patch >= 0) {
-                if (rdp_select((u32)RDP_SCRIPT[e].patch % RDP_NPATCH)) { fprintf(stderr, "rdp_select failed\n"); return 1; }
+                if (rdp_select((u32)RDP_SCRIPT[e].patch % rdp_npatch)) { fprintf(stderr, "rdp_select failed\n"); return 1; }
             } else {
                 rdp_midi(RDP_SCRIPT[e].st, RDP_SCRIPT[e].d1, RDP_SCRIPT[e].d2);
             }

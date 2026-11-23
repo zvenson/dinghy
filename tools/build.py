@@ -4,6 +4,7 @@
 """Build Dinghy (on Felucca / SLOOP's platform): the app, the update loader and an installable .fwsc package.
 
   tools/build.py [--set mks20a|mks20b|mk80] [--release X.Y[-suffix]] [--board fm1|smk37] [--model pro|elite|mke]
+  tools/build.py --romload [--release X.Y]   (no ROMs inside: they are loaded into the flash from the load page)
   tools/build.py --romtest       (the ROM area test, no ROMs: build/rdpno-romtest.fwsc)
 
 Outputs in build/: rdpno.bin (app), loader/ota.bin (update loader),
@@ -74,6 +75,10 @@ ROM_SET = "mks20a"
 # RDPNO would keep the ROMs loaded from a web page (474..494 KB). FM-1 only; build/rdpno-romtest.fwsc.
 ROMT_LO = 0x1A000
 ROMTEST = False
+# --romload: RDPNO without ROMs inside: it takes a ROM pack (any of the three sets) from the load page (docs/load/,
+# firmware/src/romload.c) into [ROMT_LO, 0x93000). The same small app slot as --romtest; build/rdpno-load.fwsc, or
+# build/rdpno-X.Y.fwsc with --release: the one that can be handed out.
+ROMLOAD = False
 PRODUCT = "FM-1_950"                # RDPNO: 95N (OUR_LOADER in the installer wants FM-1_9NN; Dinghy is 99N)
 VERSION = None                      # APP_VER for release builds
 
@@ -185,7 +190,7 @@ def rom_header():
     label = ROM_SETS[ROM_SET][0]
     no_roms = os.environ.get("RDP_NO_ROMS", "") == "1"
     if (h.exists() and os.environ.get("RDP_REPACK", "0") != "1" and f'#define RDP_SET_NAME "{label}"' in h.read_text()
-            and f"#define RDP_NO_ROMS {int(no_roms)}" in h.read_text()):
+            and f"#define RDP_NO_ROMS {int(no_roms)}" in h.read_text() and "RDP_PACK[" in h.read_text()):
         return                                    # (made for this set already, with or without ROMs as asked)
     r = subprocess.run([sys.executable, str(SRC / "tools" / "pack_roms.py"), "--set", ROM_SET], cwd=SRC)
     if r.returncode:
@@ -197,11 +202,14 @@ def rom_header():
 # on 2026-10-13). -mcpu=r3 (the AC79's own core) was tried too: no gain.
 
 def build_app():
-    rom_header()
+    if not ROMLOAD:
+        rom_header()
     flags = [*CFLAGS, *BOARD_DEFS[BOARD], "-Ifirmware/hal", "-Ifirmware/src", "-Ifirmware/gen", f'-DFELUCCA_ID="{PRODUCT}"',
-             f'-DAPP_VER="{VERSION or "0.0"}"', f'-DAPP_NAME="{"RDPNO-TEST" if ROMTEST else ROM_SETS[ROM_SET][1]}"']
+             f'-DAPP_VER="{VERSION or "0.0"}"', f'-DAPP_NAME="{"RDPNO-TEST" if ROMTEST else "RDPNO" if ROMLOAD else ROM_SETS[ROM_SET][1]}"']
     if ROMTEST:
         flags += ["-DRDP_ROMTEST=1", f"-DROMT_LO={ROMT_LO:#x}u"]
+    if ROMLOAD:
+        flags += ["-DRDP_ROMS_IN_FLASH=1", f"-DROMT_LO={ROMT_LO:#x}u"]
     if BOARD == "smk37":
         if not re.fullmatch(r"[A-Z0-9]{1,7}", DATA_FAMILY):
             raise SystemExit("DATA_FAMILY: 1..7 of A-Z 0-9")
@@ -333,7 +341,7 @@ def mmio_check():
 
 
 def main():
-    global PRODUCT, VERSION, BOARD, APP_SLOT, ROM_SET, ROMTEST
+    global PRODUCT, VERSION, BOARD, APP_SLOT, ROM_SET, ROMTEST, ROMLOAD
     ap = argparse.ArgumentParser()
     ap.add_argument("--release", metavar="X.Y", help="release build: identity FM-1_99Y, version string X.Y")
     ap.add_argument("--board", choices=sorted(BOARD_PREFIX), default=None,
@@ -343,6 +351,8 @@ def main():
     ap.add_argument("--set", choices=sorted(ROM_SETS), default=os.environ.get("RDP_SET", "mks20a"),
                     help="the ROM set: mks20a (the pianos, default), mks20b (harpsichord, clavi, vibraphone, e-pianos), mk80")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
+    ap.add_argument("--romload", action="store_true",
+                    help="no ROMs inside: they are loaded from the load page (FM-1): build/rdpno-load.fwsc")
     ap.add_argument("--romtest", action="store_true",
                     help="the ROM area test (FM-1, no ROMs): build/rdpno-romtest.fwsc, see firmware/src/romtest.c")
     a = ap.parse_args()
@@ -373,14 +383,16 @@ def main():
     for rel, sha in SDK_SHA256.items():          # fail early without the SDK
         if hashlib.sha256(fm1pkg_make.sdk_file(rel)).hexdigest() != sha:
             print(f"warning: SDK {rel} differs from AC79NN_SDK_V1.2.1; the package will not match the reference")
-    if a.romtest:                   # (after the SDK: the slot depends on the size of its cfg files)
-        if BOARD != "fm1" or a.release:
-            raise SystemExit("--romtest: the FM-1 only, no --release")
-        ROMTEST = True
-        os.environ["RDP_NO_ROMS"] = "1"
+    if a.romtest or a.romload:      # (after the SDK: the slot depends on the size of its cfg files)
+        if BOARD != "fm1" or (a.romtest and (a.release or a.romload)):
+            raise SystemExit("--romtest / --romload: the FM-1 only; --romtest without --release, --romload")
+        ROMTEST, ROMLOAD = a.romtest, a.romload
+        if ROMTEST:
+            os.environ["RDP_NO_ROMS"] = "1"
         APP_SLOT = fm1pkg_make.APP_SLOT = fm1pkg_make.slot_below(ROMT_LO)
-        name = "rdpno-romtest.fwsc"
-        print(f"romtest: app slot {APP_SLOT} B, ROM area {ROMT_LO:#x}..0x93000 ({0x93000 - ROMT_LO} B)")
+        name = "rdpno-romtest.fwsc" if ROMTEST else f"rdpno-{a.release}.fwsc" if a.release else "rdpno-load.fwsc"
+        print(f"{'romtest' if ROMTEST else 'romload'}: app slot {APP_SLOT} B, ROM area {ROMT_LO:#x}..0x93000 "
+              f"({0x93000 - ROMT_LO} B)")
     OUT.mkdir(parents=True, exist_ok=True)
     ota = build_loader()
     img, syms, dis, rt = build_app()
@@ -396,8 +408,8 @@ def main():
     if errors:
         raise SystemExit("build: checks failed")
     flash = fm1pkg_make.flash_image(img, fm1pkg_make.KEY)
-    if ROMTEST and fm1pkg_make.AREA_END > ROMT_LO:
-        raise SystemExit(f"romtest: the app area ends at {fm1pkg_make.AREA_END:#x}, past {ROMT_LO:#x}")
+    if (ROMTEST or ROMLOAD) and fm1pkg_make.AREA_END > ROMT_LO:
+        raise SystemExit(f"romtest / romload: the app area ends at {fm1pkg_make.AREA_END:#x}, past {ROMT_LO:#x}")
     pkg = fm1pkg_make.ufw(flash, ota, PRODUCT)
     (OUT / name).write_bytes(pkg)
     print(f"app      {OUT / 'rdpno.bin'}  {len(img)} B")
