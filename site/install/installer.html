@@ -6,19 +6,23 @@
      the firmware's name, source and credits ({{...}}) and inlines fm1pkg.js, fm1ota.js and the package's metadata.
      From fm1-base (github.com/charlesvestal/fm1-base, web/installer.html, MPL-2.0), as sq80-fm1 carries it; changed
      for RDPNO (R-Jeb, 2026): no backup page (the box and its check hidden), no crash report section (RDPNO's
-     platform has no log readout), the footer; the ROMs come in RDPNO's own step (site/install/install_app.js). -->
+     platform has no log readout), English only (the language button hidden), the footer, always dark in the site's colours with its navigation; the ROMs come in
+     RDPNO's own step (site/install/install_app.js). -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Install · {{NAME}}</title>
 <style>
-  /* light: the coral and the dim brown darkened just enough for 4.5:1 on the cream (and white on the coral) */
-  :root { --bg: #faf4e8; --fg: #48392f; --dim: #6e5c4b; --accent: #b84a1e; --on-accent: #fff; --bad: #a3271b; --focus: #1f6fd1; }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) { --bg: #1c1814; --fg: #f2e8d8; --dim: #b3a28e; --accent: #f28a5a; --on-accent: #2a140a; --bad: #ff8a73; --focus: #79adff; }
-  }
-  :root[data-theme="dark"] { --bg: #1c1814; --fg: #f2e8d8; --dim: #b3a28e; --accent: #f28a5a; --on-accent: #2a140a; --bad: #ff8a73; --focus: #79adff; }
+  /* RDPNO: always dark, the site's palette (site/site.css: the MKS-20's LCD blue on black), the name in its face */
+  :root { --bg: #0e1113; --fg: #e8ecee; --dim: #9aa5ab; --accent: #5ac8e6; --on-accent: #061217; --bad: #ff6a55; --focus: #ffd23c;
+          color-scheme: dark; }
+  @font-face { font-family: "Michroma"; src: url("../fonts/michroma.woff2") format("woff2"); font-display: swap; }
+  .logo { font-family: "Michroma", sans-serif; color: #fff; -webkit-text-stroke: .045em #fff; letter-spacing: .08em;
+          border-bottom: .09em solid #2f7fd0; padding-bottom: .06em; line-height: 1.25; display: inline-block; text-decoration: none; }
+  .nav { color: var(--dim); font-size: 14px; margin: 0 0 20px; }
+  .nav a { color: #5ac8e6; }
+  .nav .logo { font-size: 13px; border-bottom-width: 2px; }
   body { margin: 0; background: var(--bg); color: var(--fg);
          font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; }
   main { max-width: 520px; margin: 0 auto; padding: 48px 16px 0; }
@@ -67,8 +71,9 @@ ul.need li.bad { opacity: .7; }
 </head>
 <body>
 <main>
-  <button type="button" class="lang" id="lang" lang="ja">日本語</button>
-  <h1>Install {{NAME}}</h1>
+  <button type="button" class="lang" id="lang" lang="ja" hidden>日本語</button>   <!-- (RDPNO: English only) -->
+  <p class="nav"><a href="../" class="logo">RDPNO</a> · <b>Install</b> · <a href="../load/">Load the ROMs</a> · <a href="../screens/">The screens</a></p>
+  <h1>Install <span class="logo">{{NAME}}</span></h1>
   <p data-t="intro">Connect the FM-1 by USB, then press Install. It works in Chrome or Edge; the browser asks once to allow MIDI: allow it.</p>
   <p data-t="warn">Do not unplug the USB cable while writing.</p>
   <p class="small" data-t="direct"></p>
