@@ -6,7 +6,7 @@
      the firmware's name, source and credits ({{...}}) and inlines fm1pkg.js, fm1ota.js and the package's metadata.
      From fm1-base (github.com/charlesvestal/fm1-base, web/installer.html, MPL-2.0), as sq80-fm1 carries it; changed
      for RDPNO (R-Jeb, 2026): no backup page (the box and its check hidden), no crash report section (RDPNO's
-     platform has no log readout), the footer, always dark in the site's colours with its navigation; the ROMs come in
+     platform has no log readout), English only (the language button hidden), the footer, always dark in the site's colours with its navigation; the ROMs come in
      RDPNO's own step (site/install/install_app.js). -->
 <html lang="en">
 <head>
@@ -71,7 +71,7 @@ ul.need li.bad { opacity: .7; }
 </head>
 <body>
 <main>
-  <button type="button" class="lang" id="lang" lang="ja">日本語</button>
+  <button type="button" class="lang" id="lang" lang="ja" hidden>日本語</button>   <!-- (RDPNO: English only) -->
   <p class="nav"><a href="../" class="logo">RDPNO</a> · <b>Install</b> · <a href="../load/">Load the ROMs</a> · <a href="../screens/">The screens</a></p>
   <h1>Install <span class="logo">{{NAME}}</span></h1>
   <p data-t="intro">Connect the FM-1 by USB, then press Install. It works in Chrome or Edge; the browser asks once to allow MIDI: allow it.</p>
