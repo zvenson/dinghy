@@ -137,11 +137,12 @@ const RomLoad = (() => {
   async function readFiles(list) {
     const files = {}, unknown = [];
     const byLower = {};
-    for (const s of Object.values(SETS)) for (const n of [...s.wave, s.params]) byLower[n.toLowerCase()] = n;
-    byLower[PROG.toLowerCase()] = PROG;
+    const stem = (n) => n.toLowerCase().replace(/\.[a-z0-9]+$/, "");   // (RD200_B.rom = RD200_B.bin)
+    for (const s of Object.values(SETS)) for (const n of [...s.wave, s.params]) byLower[stem(n)] = n;
+    byLower[stem(PROG)] = PROG;
     for (const f of list) {
       const b = new Uint8Array(await f.arrayBuffer());
-      const name = KNOWN[await sha256hex(b)] || byLower[f.name.toLowerCase()];
+      const name = KNOWN[await sha256hex(b)] || byLower[stem(f.name)];
       if (name && b.length === (SIZE[name] || 0x20000)) files[name] = b;
       else if (b.length === 0x20000 || b.length === 0x2000) unknown.push(f.name);
     }
@@ -149,6 +150,24 @@ const RomLoad = (() => {
   }
   const setsIn = (files) => Object.keys(SETS).filter((k) => [...SETS[k].wave, SETS[k].params, PROG].every((n) => files[n]));
   const missing = (k, files) => [...SETS[k].wave, SETS[k].params, PROG].filter((n) => !files[n]);
+  /* the set the chosen files point to: a complete one, else the one with most of its own files (not just RD200_B) */
+  function bestSet(files, now) {
+    const own = (k) => [...SETS[k].wave, SETS[k].params].filter((n) => files[n]).length;
+    const full = setsIn(files);
+    if (full.length) return full.includes(now) ? now : full[0];
+    const k = Object.keys(SETS).reduce((a, b) => (own(b) > own(a) ? b : a), now);
+    return own(k) > own(now) ? k : now;
+  }
+  /* what set k needs, file by file, as HTML: each with what it is and whether it is here (files: readFiles') */
+  function checklist(k, files = {}) {
+    const s = SETS[k], esc = (t) => t.replace(/[&<>]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"})[c]);
+    const rows = [...s.wave.map((n) => [n, "sound ROM (the wave samples)"]), [s.params, "parameter ROM (the voices)"],
+                  [PROG, "program ROM of the CPU-B board: every set needs it"]];
+    const have = rows.filter(([n]) => files[n]).length;
+    return `<p class="small">${esc(s.label)} needs these ${rows.length} files (${have} of them chosen):</p><ul class="need">` +
+      rows.map(([n, what]) => `<li class="${files[n] ? "ok" : "bad"}">${files[n] ? "✓" : "✗"} <code>${esc(n)}</code> ${esc(what)}</li>`).join("") +
+      "</ul>";
+  }
 
   /* ---------------------------------------------------------------- the FM-1 (romload.c) */
   const HEAD = [0x7D, 0x52, 0x44], CHUNK = 448;
@@ -261,6 +280,6 @@ const RomLoad = (() => {
     }
     return null;
   }
-  return {SETS, makePack, readFiles, setsIn, missing, crc32, loadFrames, find, waitFor, lz4};
+  return {SETS, makePack, readFiles, setsIn, missing, bestSet, checklist, crc32, loadFrames, find, waitFor, lz4};
 })();
 if (typeof module !== "undefined") module.exports = RomLoad;

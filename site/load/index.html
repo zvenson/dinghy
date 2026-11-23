@@ -31,14 +31,18 @@
     <p>Choose the files, all at once if you like: the page takes the ones a set needs, recognised by their content
       (or by the names <a href="https://github.com/giulioz/rdpiano" target="_blank" rel="noopener">rdpiano</a> gives
       them). They are read here, in the browser.</p>
+    <p>Each set needs <b>five files</b>: three sound ROMs, one parameter ROM, and the program ROM of the CPU-B board
+      (<code>RD200_B.bin</code>), which every set needs. The list below shows what the chosen set needs and ticks
+      off what you have chosen; the extension does not matter (<code>.bin</code>, <code>.rom</code>).</p>
     <table class="sets">
-      <tr><th>Set</th><th>Voices</th><th>Files</th></tr>
-      <tr><td>MKS-20 A</td><td>Piano 1, 2, 3</td><td><code>mks20_15179736/37/38.BIN</code>, <code>mks20_15179757.BIN</code>, <code>RD200_B.bin</code></td></tr>
-      <tr><td>MKS-20 B</td><td>Harpsichord, Clavi, Vibraphone, E-Piano 1, 2</td><td><code>mks20_15179739/40/41.BIN</code>, <code>mks20_15179757.BIN</code>, <code>RD200_B.bin</code></td></tr>
-      <tr><td>MK-80</td><td>Classic, Special, Blend, Contemporary, A.Piano 1, 2, Clavi, Vibraphone</td><td><code>MK80_IC5/6/7.bin</code>, <code>MK80_IC18.bin</code>, <code>RD200_B.bin</code></td></tr>
+      <tr><th>Set</th><th>Voices</th><th>Sound ROMs</th><th>Parameter ROM</th><th>Program ROM</th></tr>
+      <tr><td>MKS-20 A</td><td>Piano 1, 2, 3</td><td><code>mks20_15179736</code>, <code>…37</code>, <code>…38</code></td><td><code>mks20_15179757</code></td><td><code>RD200_B</code></td></tr>
+      <tr><td>MKS-20 B</td><td>Harpsichord, Clavi, Vibraphone, E-Piano 1, 2</td><td><code>mks20_15179739</code>, <code>…40</code>, <code>…41</code></td><td><code>mks20_15179757</code></td><td><code>RD200_B</code></td></tr>
+      <tr><td>MK-80</td><td>Classic, Special, Blend, Contemporary, A.Piano 1, 2, Clavi, Vibraphone</td><td><code>MK80_IC5</code>, <code>MK80_IC6</code>, <code>MK80_IC7</code></td><td><code>MK80_IC18</code></td><td><code>RD200_B</code></td></tr>
     </table>
     <p><input type="file" id="files" multiple> <span class="small">or a folder:</span> <input type="file" id="folder" webkitdirectory></p>
     <p><label>Set <select id="set"></select></label></p>
+    <div id="need"></div>
     <p class="status" id="fstat" role="status"></p>
   </section>
 
@@ -72,14 +76,16 @@ for (const [k, s] of Object.entries(RomLoad.SETS)) {
   $("set").append(o);
 }
 $("set").value = "mks20a";
+$("need").innerHTML = RomLoad.checklist("mks20a");
 
 function ready() { $("load").disabled = !link || RomLoad.missing($("set").value, got.files).length > 0; }
-function showFiles() {
+function showFiles(auto) {                     /* auto: new files chosen, the set follows them */
   const have = RomLoad.setsIn(got.files);
-  if (have.length && !have.includes($("set").value)) $("set").value = have[0];
+  if (auto) $("set").value = RomLoad.bestSet(got.files, $("set").value);
   const miss = RomLoad.missing($("set").value, got.files);
+  $("need").innerHTML = RomLoad.checklist($("set").value, got.files);
   if (!Object.keys(got.files).length && !got.unknown.length) say("fstat", "");
-  else if (miss.length) say("fstat", `Missing for this set: ${miss.join(", ")}` + (got.unknown.length ? `. Not recognised: ${got.unknown.join(", ")}` : ""), "bad");
+  else if (miss.length) say("fstat", `${miss.length} of the files above still missing.` + (got.unknown.length ? ` Not recognised: ${got.unknown.join(", ")}` : ""), "bad");
   else say("fstat", `All files of ${RomLoad.SETS[$("set").value].label} are here.` + (have.length > 1 ? ` (Also complete: ${have.filter((k) => k !== $("set").value).map((k) => RomLoad.SETS[k].label).join(", ")}.)` : ""), "ok");
   ready();
 }
@@ -88,11 +94,11 @@ async function take(list) {
   const r = await RomLoad.readFiles(list);
   Object.assign(got.files, r.files);
   got.unknown = r.unknown;
-  showFiles();
+  showFiles(true);
 }
 $("files").onchange = (e) => take(e.target.files);
 $("folder").onchange = (e) => take(e.target.files);
-$("set").onchange = showFiles;
+$("set").onchange = () => showFiles(false);
 
 function holds(info) {
   return info.pack ? `It holds ${info.set} (${info.patches} voices).` : "It has no ROMs yet.";

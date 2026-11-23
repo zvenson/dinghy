@@ -42,23 +42,31 @@
     const p = ui.ask("Your ROMs",
       `<p>RDPNO plays Roland's own sound ROMs, and they are not part of it: load your own dumps. Installing clears
        them from the FM-1, so they are loaded again right after the firmware.</p>
-       <p>Choose the ROM files (all of them at once is fine: the page takes the ones the set needs, by their
-       content), as <a href="https://github.com/giulioz/rdpiano" target="_blank" rel="noopener">rdpiano</a> names them.
-       They stay on this computer; only the FM-1 gets them.</p>
-       <p><input type="file" id="rlfiles" multiple></p>
+       <p>Choose the set, then its files: <b>five</b> per set, three sound ROMs, one parameter ROM, and the CPU-B
+       board's program ROM <code>RD200_B</code>, which every set needs. All your ROM files at once is fine: the page
+       takes the ones the set needs, by their content or their names (as
+       <a href="https://github.com/giulioz/rdpiano" target="_blank" rel="noopener">rdpiano</a> names them). They stay
+       on this computer; only the FM-1 gets them.</p>
        <p><label>Set <select id="rlset">${sets.join("")}</select></label></p>
+       <div id="rlneed">${RomLoad.checklist("mks20a")}</div>
+       <p><input type="file" id="rlfiles" multiple></p>
        <p class="small" id="rlnote">${note || ""}</p>`,
       [["go", "Install with these ROMs"], ["none", "Install without ROMs"], ["cancel", "Cancel"]]);
     let got = {files: {}, unknown: []};
     const show = () => {
-      const have = RomLoad.setsIn(got.files), k = document.getElementById("rlset").value;
-      if (have.length && !have.includes(k)) document.getElementById("rlset").value = have[0];
+      document.getElementById("rlset").value = RomLoad.bestSet(got.files, document.getElementById("rlset").value);
       const miss = RomLoad.missing(document.getElementById("rlset").value, got.files);
-      document.getElementById("rlnote").textContent = miss.length ? `Missing for this set: ${miss.join(", ")}` +
+      document.getElementById("rlneed").innerHTML = RomLoad.checklist(document.getElementById("rlset").value, got.files);
+      document.getElementById("rlnote").textContent = miss.length ? `${miss.length} of the files above still missing` +
         (got.unknown.length ? `. Not recognised: ${got.unknown.join(", ")}` : "") : "All files of this set are here.";
     };
     document.getElementById("rlfiles").addEventListener("change", async (e) => { got = await RomLoad.readFiles(e.target.files); show(); });
-    document.getElementById("rlset").addEventListener("change", show);
+    document.getElementById("rlset").addEventListener("change", () => {
+      const k = document.getElementById("rlset").value;
+      document.getElementById("rlneed").innerHTML = RomLoad.checklist(k, got.files);
+      const miss = RomLoad.missing(k, got.files);
+      document.getElementById("rlnote").textContent = miss.length ? `${miss.length} of the files above still missing.` : "All files of this set are here.";
+    });
     const v = await p;
     if (v === "cancel") return false;
     if (v === "none") return null;
