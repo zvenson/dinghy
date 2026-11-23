@@ -30,7 +30,7 @@
         released then).</td></tr>
       <tr><th>Load bar</th><td><b>CPU</b> how much of each audio block the board takes now (the bar; red above 80 %),
         <b>PEAK</b> the highest of the last two seconds (the white tick), <b>PARTS</b> how many of the sound chip's
-        parts sound. A <b>*</b>: the brake is on, the faintest parts are left out for a moment so that it stays in time.</td></tr>
+        parts sound. A <b>*</b>: the brake is on: voice stealing starts with the softest parts (they are left out for a moment), so that the board keeps time.</td></tr>
     </table>
     <table>
       <tr><th>PRESETS</th><td>the voice</td><th>ALGORITHM</th><td>the MIDI receive channel</td></tr>
@@ -43,9 +43,9 @@
   <div class="screen"><img src="img/home.png" alt="The HOME page: voice level 15, treble 0.0 dB, bass 0.0 dB, key velocity 100">
     <div><table>
       <tr><th>K1</th><td><b>VOICE LEVEL</b> 0..15, the voice's volume.</td></tr>
-      <tr><th>K2</th><td><b>TREBLE LEVEL</b> -10.5..+10.5 dB in 1.5 dB steps: a gentle shelf, its corner at 4 kHz (full at about 10 kHz).</td></tr>
-      <tr><th>K3</th><td><b>BASS LEVEL</b> -10.5..+10.5 dB: a shelf with its corner at 200 Hz (full at about 100 Hz).</td></tr>
-      <tr><th>K4</th><td><b>KEY VELOCITY</b> 1..127: how hard the FM-1's own keys play (they feel none). MIDI notes bring their own.</td></tr>
+      <tr><th>K2</th><td><b>TREBLE LEVEL</b> -10.5..+10.5 dB in 1.5 dB steps: a shelving filter, cutoff frequency 4 kHz (there it gives half the level; at 10 kHz 90 % of it). A gentle slope: at most about 3.5 dB per octave at ±10.5 dB, less at smaller levels.</td></tr>
+      <tr><th>K3</th><td><b>BASS LEVEL</b> -10.5..+10.5 dB in 1.5 dB steps: a shelving filter, cutoff frequency 200 Hz (half the level there; at 100 Hz 80 % of it, at 50 Hz nearly all). The same gentle slope: at most about 3.5 dB per octave.</td></tr>
+      <tr><th>K4</th><td><b>KEY VELOCITY</b> 1..127: a fixed velocity, just for the FM-1's own keys, as they are not velocity sensitive. MIDI notes are received with their own velocity.</td></tr>
     </table></div></div>
 
   <h3>FX: TREMOLO / CHORUS</h3>
