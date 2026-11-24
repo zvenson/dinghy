@@ -39,6 +39,10 @@ static uint32_t um_len(uint32_t s)                 /* data bytes of a channel st
 static void um_byte(uint32_t b)
 {
     if (b >= 0xF8u) {                              /* realtime: the state is kept; clock and transport */
+#ifdef MIDI_RT_HOOK
+        if (b == 0xF8u || b == 0xFAu || b == 0xFBu || b == 0xFCu)
+            MIDI_RT_HOOK(b);                       /* (the app takes the timing here, the queue only tells it) */
+#endif
         if ((b == 0xF8u || b == 0xFAu || b == 0xFBu || b == 0xFCu) && mi_w - mi_r < MQ) {
             midi_in_q[mi_w % MQ] = 0x1Fu | b << 8; /* (cable 1: from the TRS jack) */
             RING_PUBLISH();

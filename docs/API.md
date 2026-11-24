@@ -15,6 +15,7 @@ when in doubt, it is short.
 - [Memory and flash](#memory-and-flash)
 - [Build options](#build-options)
 - [The SMK-37](#the-smk-37)
+- [The kit: clock, MIDI, mirror, backup, VIBE LINK](#the-kit)
 
 ## The contract
 
@@ -181,9 +182,11 @@ if (ch && (st & 15u) != ch - 1u) continue;          /* in: not ours */
 midi_send(0x90u | (ch ? ch - 1u : 0u), note, vel);  /* out */
 ```
 
-The tempo of an incoming clock: the time between every 24th `0xF8`, `60000 / ms` BPM (`dinghy.c` shows it and blinks
-PLAY on the beat). `midi_send(0xF8, 0, 0)` sends a clock, if your firmware is the master. The SMK-37 has no TRS MIDI
-IN (its pin is a key-matrix row there): `midi_get` returns only 1 on it.
+Clock and transport also reach `MIDI_RT_HOOK(status)` if you define it before the `platform.c` include: called where
+they arrive (the USB and TRS poll in TIMER5), not when your main loop gets round to `midi_get`, so a redraw cannot
+move a beat. [kit_clock.h](#the-kit) does the rest; take it rather than measuring `0xF8` yourself.
+`midi_send(0xF8, 0, 0)` sends a clock, if your firmware is the master. The SMK-37 has no TRS MIDI IN (its pin is a
+key-matrix row there): `midi_get` returns only 1 on it.
 
 ## Storage: settings, blobs, slots
 
@@ -287,3 +290,63 @@ What the SMK-37 has more:
 
 The SMK-37's store is shared by the ports of the kit: at boot an owner tag ("SMK37DATA" + `DATA_FAMILY`) says whose
 data it is; anything else is cleared once, never read. Its update loader stays dark (no screen).
+
+## The kit
+
+What OberVave grew on top of the platform, in headers you include after `platform.c` when you want them
+(`dinghy.c` uses all five; each file's head says the rest). Nothing in `platform.c` depends on them.
+
+### kit_clock.h: tempo, transport, MIDI clock sync
+
+```c
+static void clock_rt(uint32_t st);
+#define MIDI_RT_HOOK(st) clock_rt(st)                /* before platform.c */
+...
+static void my_tick(uint32_t tick, uint32_t ofs) { if (tick % 6u == 0u) step(); }   /* 24 a quarter, in the ISR */
+#define CLOCK_TICK(tick, ofs) my_tick(tick, ofs)
+#include "kit_clock.h"
+static void app_audio(int32_t *out, uint32_t n) { clock_audio(n); /* then render */ }
+```
+
+| | |
+| --- | --- |
+| `clock_audio(n)` | in `app_audio`, first: runs the transport, calls `CLOCK_TICK(tick, ofs)` for each 1/24 quarter in this block (`tick` since START, `ofs` the frame in the block) |
+| `clock_start()`, `clock_stop()`, `clock_toggle()` | the transport, from the main loop |
+| `clock_tap()` | tap tempo (the mean of the last taps) |
+| `clock_set_sync(internal)` | SYNC INTERNAL (1: a MIDI clock is ignored) or AUTO (0: a clock that comes in leads) |
+| `clock_poll()` | each main-loop pass: a master that went quiet gives the tempo back |
+| `clock_bpm10()`, `clk_ext()`, `clk_run`, `clk_tempo`, `clk_ui_beat` | the tempo now x10, a master leads, the transport runs, our own BPM, a beat counter for the PLAY light |
+
+A MIDI clock's tempo is measured in rendered frames, and our beat is held on the master's quarters by a PI loop
+(OberVave 3.5.4): `tests/clock_sync_test.py` plays a master for 5 minutes at odd tempos with jitter, the beats stay
+within a few ms, no drift. START and CONTINUE start from the top (no song position pointer), STOP stops.
+
+### kit_midi.h: the channel and the usual controllers
+
+Define `MIDI_NOTE(on, note, vel)` (and, if you want them, `MIDI_CC(n, v)`, `MIDI_PROGRAM(n)`, `MIDI_PANIC()`), then
+call `midi_poll(0)` each pass (and `midi_poll(1)` from `LCD_IDLE`). It filters `midi_ch` (0 OMNI, 1..16), applies the
+sustain pedal (CC 64) to note offs, takes pitch bend (`midi_bend`; `bend_q12()` in the ISR slews it, `BEND_RANGE`
+semitones, default 2), the mod wheel (`midi_mod`), volume (CC 7: `midi_vol`, `midi_vol_q15()`), all notes off (CC 120,
+123). `key_note(on, note, vel)` sends your panel's notes out on `midi_out_ch()` through the same pedal.
+`pitch_q16(s)` turns 1/4096 semitones into a frequency factor (Q16), no float.
+
+### kit_mirror.h: FM-1 Mirror
+
+Your screen, live and big in [FM-1 Mirror](https://github.com/pfkellogg/fm1-mirror) (Patrick F. Kellogg, MIT,
+`firmware/src/screen_mirror/`). `#define LCD_MIRROR 1` before `platform.c`, call `mirror_poll()` each pass before
+`platform_poll()`; it returns 1 when a new viewer wants the whole screen: draw everything again. Nothing is sent unless
+the app asks. 16 KB of RAM for its queue.
+
+### kit_backup.h: settings, blobs and slots to a file and back
+
+OberVave's backup protocol over SysEx (`F0 7D t0 t1 cmd ...`, the file's head has it all): HELLO, READ, ERASE, WRITE,
+DONE, only within `store.h`'s regions. `BACKUP_TAG0`/`BACKUP_TAG1` name your firmware (Dinghy `'D' 'Y'`: give your
+fork its own two letters), `BACKUP_STOP()` silences it when a restore begins. Call `backup_poll()` after
+`mirror_poll()`; while it returns 1, do nothing else. `tests/backup_test.c` checks it against a fake flash.
+
+### kit_link.h: VIBE LINK (FM-1)
+
+The FM-1 as a controller for the VIBE FM, as in OberVave 3.4 and the VIBE FM Link firmware (the VIBE's one profile
+fits all): `link_mode` 0 OFF, 1 ON (your firmware plays and the panel also goes out as CCs), 2 CONTROL (only the
+controller; OCT- + OCT+ held a second = back). Use `link_enc_take()` for `fm1_enc_take()`, `link_buttons(b, rel)`,
+`link_master()`, and `link_control(&oct)` while CONTROL. On the SMK-37 it compiles to nothing.

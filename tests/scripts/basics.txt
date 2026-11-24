@@ -1,0 +1,31 @@
+# 0.6's basics: the GLOBAL page (GLO = 7 on the FM-1), the click, PLAY on our own tempo, a MIDI clock taking over
+# (SYNC AUTO), pitch bend, the sustain pedal, CC 7, all notes off
+500 btn 7
+700 enc 5 1
+900 enc 4 -20
+1000 shot
+1100 btn 12
+2600 shot
+3000 btn 12
+3200 btn 7
+# a master at 128 BPM over USB: START, clocks
+3500 midi 0xFA 0 0
+3500 clock 128 240
+5000 shot
+6000 midi 0xFC 0 0
+# bend up, a note, back
+6200 midi 0x90 69 100
+6400 midi 0xE0 0 127
+6700 midi 0xE0 0 64
+# sustain: note off while the pedal is down keeps it, the pedal up ends it
+6900 midi 0xB0 64 127
+7000 midi 0x80 69 0
+7300 shot
+7500 midi 0xB0 64 0
+7600 shot
+# volume, all notes off
+7800 midi 0xB0 7 40
+7900 midi 0x90 72 100
+8200 midi 0xB0 123 0
+8400 shot
+8800 end

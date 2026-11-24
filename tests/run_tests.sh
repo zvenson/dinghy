@@ -22,6 +22,10 @@ run "FM-1 app on the host: the default script plays, screens and sound" sh tests
 run "SMK-37 app on the host: the default script" env BOARD=smk37 sh tests/run_host.sh
 run "FM-1 MIDI: USB, the TRS jack, a clock, the channel" sh tests/run_host.sh tests/scripts/midi.txt
 run "SMK-37: velocity, a pad, an outer key, the pitch wheel" env BOARD=smk37 sh tests/run_host.sh tests/scripts/smk37.txt
+run "FM-1 basics: GLOBAL page, click, PLAY, a MIDI clock, bend, sustain, CC 7, all notes off" sh tests/run_host.sh tests/scripts/basics.txt
+run "MIDI clock sync: locked to a master for 5 minutes, no drift (kit_clock.h)" python3 tests/clock_sync_test.py
+$CC -Ifirmware/hal -Ifirmware/src -o "$OUT/backup_test" tests/backup_test.c
+run "backup over SysEx: HELLO, READ, ERASE, WRITE, DONE, the region guard (kit_backup.h)" "$OUT/backup_test"
 
 $CC -DBOARD_SMK37=1 -Ifirmware/hal -o "$OUT/smk_flash_test" tests/smk_flash_test.c
 run "SMK-37 flash map: settings, blobs, owner tag, slots in the store; never the head, BTIF/USRTRIM, USR, key_mac" "$OUT/smk_flash_test"

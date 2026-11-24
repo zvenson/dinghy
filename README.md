@@ -5,13 +5,16 @@
 **The smallest firmware for the M-VAVE FM-1 to build your own on.**
 
 Dinghy plays a sine wave on the keys, and that is all it does. Under it is everything an FM-1 firmware needs
-before it can be any fun: the update path, the USB rescue, MIDI over USB and the TRS jack (with clock), USB audio, the
-keys, knobs and LEDs, the screen, flash storage, and the same again for the M-Vave SMK-37. It all works, so you start
-with the part you actually want to write.
+before it can be any fun: the update path, the USB rescue, MIDI over USB and the TRS jack, USB audio, the keys, knobs
+and LEDs, the screen, flash storage, and the same again for the M-Vave SMK-37. Around it are the basics a player
+expects of any instrument, as OberVave has them: MIDI clock sync locked to the master, the MIDI channel, pitch bend,
+sustain, volume, a tempo and transport of its own, FM-1 Mirror, a backup to a file, VIBE LINK. It all works, so you
+start with the part you actually want to write.
 
 ```
-firmware/src/dinghy.c     <- your firmware: ~300 lines, a 4-voice sine. Start here.
+firmware/src/dinghy.c     <- your firmware: ~450 lines, a 4-voice sine and a GLOBAL page. Start here.
 firmware/src/platform.c   <- the plumbing (boot, USB, MIDI, updates, audio ISR, storage). Done; read it, don't fight it.
+firmware/src/kit_*.h      <- the basics from OberVave: clock sync, MIDI controllers, mirror, backup, VIBE LINK. Take them.
 firmware/src/store.h      <- where your data lives in flash, per board
 firmware/src/*.c, hal/    <- Felucca's platform, as SLOOP / sloopDX / OberVave carry it; the SMK-37 layer
 ```
@@ -22,7 +25,13 @@ rest. The smallest boat of the family, after the felucca and the sloop.
 
 <p align="center"><img src="docs/screen.png" width="240" alt="Dinghy's screen: the name, the note played, a keyboard with the keys that sound"></p>
 
-> **Status: 0.5.** 0.5 runs on newer FM-1s too: their flash chip, the UC25HQ80 (0xB36014), beside the Puya (0x856014);
+> **Status: 0.6.** 0.6 brings OberVave's basics over as the kit (`firmware/src/kit_*.h`): the MIDI clock taken where it
+> arrives and locked to the master (OberVave 3.5.4's PI loop; 5 minutes, no drift, `tests/clock_sync_test.py`), SYNC
+> AUTO / INTERNAL, our own tempo with PLAY and tap tempo, pitch bend, the mod wheel, sustain, CC 7, all notes off,
+> program change, FM-1 Mirror, the backup over SysEx, VIBE LINK; the GLOBAL page in `dinghy.c` uses them all. That code
+> runs on the device in OberVave; Dinghy 0.6 is tested on the host (all of `tests/run_tests.sh`) and built for all
+> boards so far. See [CHANGELOG.md](CHANGELOG.md).
+> 0.5 runs on newer FM-1s too: their flash chip, the UC25HQ80 (0xB36014), beside the Puya (0x856014);
 > before, a firmware built on Dinghy saved to RAM only on them. Dinghy's platform runs on the FM-1 in VIBE FM Link
 > (zvenson/vibe-link), tested there on 7.11.2026. 0.3 was tested on the FM-1: the install, MIDI in (pitch exact, 4 voices), USB audio at
 > 44.1 / 48 kHz, the keys, the screen, the octave kept in flash, and back to another firmware through the hub.
@@ -35,7 +44,12 @@ rest. The smallest boat of the family, after the felucca and the sloop.
 | --- | --- |
 | **Updates that always work** | `tools/fm1_install.py`, the web installers and the [FM-1 Firmware Hub](https://thefirmwarehub.com) reach your firmware over USB, so you (and your users) can always install the next build, or go back to the official firmware. |
 | **USB rescue** | Hold **OCT-** while switching on: no sound, only the updater. If your firmware crashes twice at boot, the FM-1 goes there by itself. |
-| **MIDI** | USB in and out (class compliant) and the FM-1's TRS MIDI IN, in one queue: `midi_get()` says where a message came from, `midi_send()`. Clock, start, stop and continue reach your app. |
+| **MIDI** | USB in and out (class compliant) and the FM-1's TRS MIDI IN, in one queue: `midi_get()` says where a message came from, `midi_send()`. Clock, start, stop and continue reach your app where they arrive (`MIDI_RT_HOOK`). |
+| **MIDI clock sync** | `kit_clock.h`: a tick 24 times a quarter in the audio ISR, to the frame; our own tempo (PLAY, tap tempo) or a master's, locked to its beat (SYNC AUTO / INTERNAL). |
+| **MIDI basics** | `kit_midi.h`: the channel (OMNI or 1..16, in and out), pitch bend slewed, mod wheel, sustain pedal, volume (CC 7), all notes off, program change, the other CCs handed to you. |
+| **FM-1 Mirror** | `kit_mirror.h`: your screen, live and big on a computer in Patrick F. Kellogg's [FM-1 Mirror](https://github.com/pfkellogg/fm1-mirror). |
+| **Backup** | `kit_backup.h`: settings, blobs and slots to a file on the computer and back, over SysEx (OberVave's protocol). |
+| **VIBE LINK** | `kit_link.h`: the FM-1 as a controller for the VIBE FM, beside your sound or instead of it. |
 | **USB audio** | The FM-1 shows up as a 16-bit stereo audio input (44.1 or 48 kHz): record it into any DAW or phone. Nothing to do. |
 | **Panel** | 27 keys, 14 buttons, 7 encoders, the MASTER knob, the LEDs, by name (`BTN_PLAY`, `ENC_KNOB1`, ...). |
 | **Screen** | 240 x 240, text in two sizes, rectangles, lines, pixels. |

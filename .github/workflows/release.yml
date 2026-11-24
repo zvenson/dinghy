@@ -72,11 +72,19 @@ jobs:
         with:
           subject-path: build/dinghy-[0-9]*.fwsc
 
+      - name: Release notes from CHANGELOG.md (tags only)
+        if: github.ref_type == 'tag'
+        run: |
+          awk -v v="${GITHUB_REF_NAME#v}" '/^## /{p = ($2 == v); next} p' CHANGELOG.md > build/NOTES.md
+          test -s build/NOTES.md || echo "See [CHANGELOG.md](CHANGELOG.md)." > build/NOTES.md
+          cat build/NOTES.md
+
       # (the release builds only, not the dev ones: dinghy-smk37.fwsc – no comment inside the block below: it would be part of the pattern)
       - name: Release (tags only)
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
+          body_path: build/NOTES.md
           files: |
             build/dinghy-[0-9]*.fwsc
             build/SHA256SUMS

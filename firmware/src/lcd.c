@@ -12,6 +12,11 @@
 
 static uint8_t lcd_small[64];
 static uint8_t lcd_busy;           /* a lcd_data DMA may still run; CS is low */
+#ifdef LCD_MIRROR                  /* (the app also sends what it paints elsewhere: FM-1 Mirror, kit/mirror.h) */
+static void lcd_mirror_window(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1);
+static void lcd_mirror_px(const void *p, uint32_t n);   /* the pixels of a RAMWR, as sent (big-endian RGB565) */
+static uint8_t lcd_ramwr;          /* the last command was RAMWR: lcd_data carries pixels */
+#endif
 
 static void lcd_spin(uint32_t n)
 {
@@ -35,6 +40,9 @@ static void lcd_sync(void)          /* finish the running transfer (before touch
 static void lcd_cmd(uint8_t c)
 {
     lcd_sync();
+#ifdef LCD_MIRROR
+    lcd_ramwr = c == 0x2Cu;
+#endif
     fm1_lcd_send_cmd(c);
     fm1_lcd_wait();
     fm1_lcd_deselect();
@@ -45,6 +53,10 @@ static void lcd_data(const void *p, uint32_t n)
     if (!n)
         return;                    /* SPI_CNT = 0 never completes */
     lcd_sync();
+#ifdef LCD_MIRROR
+    if (lcd_ramwr)
+        lcd_mirror_px(p, n);
+#endif
     fm1_lcd_send_data(p, n);
     lcd_busy = 1;                  /* completed by lcd_sync */
 }
@@ -65,6 +77,9 @@ static void lcd_window(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
     lcd_cmd(0x2B);
     lcd_data(lcd_small + 4, 4);
     lcd_cmd(0x2C);
+#ifdef LCD_MIRROR
+    lcd_mirror_window(x0, y0, x1, y1);
+#endif
 }
 
 static uint16_t lcd_fillbuf[240];

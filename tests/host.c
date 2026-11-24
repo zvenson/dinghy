@@ -310,6 +310,9 @@ static void platform_poll(void)                 /* one call = one millisecond */
             fprintf(stderr, "script: an SMK-37 event in an FM-1 build (BOARD_SMK37=0), ignored\n");
 #endif
         } else if (script[step].st) {
+#ifdef MIDI_RT_HOOK
+            if (script[step].st >= 0xF8u) MIDI_RT_HOOK(script[step].st);   /* (as usb.c: clock and transport as they arrive) */
+#endif
             mq[mq_w % 64u][0] = script[step].st; mq[mq_w % 64u][1] = script[step].d1; mq[mq_w % 64u][2] = script[step].d2;
             mq[mq_w % 64u][3] = script[step].src;
             mq_w++;
