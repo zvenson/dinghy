@@ -25,6 +25,8 @@ rest. The smallest boat of the family, after the felucca and the sloop.
 
 <p align="center"><img src="docs/screen.png" width="240" alt="Dinghy's screen: the name, the note played, a keyboard with the keys that sound"></p>
 
+> **0.6.1:** the newer FM-1s' screen (the FM-1/M-VAVE logo under it) – washed out, no reds or blank until now: the panel gets M-VAVE's own register values in M-VAVE's order (`firmware/src/lcd.c`, after Jake Handy's h1).
+>
 > **Status: 0.6.** 0.6 brings OberVave's basics over as the kit (`firmware/src/kit_*.h`): the MIDI clock taken where it
 > arrives and locked to the master (OberVave 3.5.4's PI loop; 5 minutes, no drift, `tests/clock_sync_test.py`), SYNC
 > AUTO / INTERNAL, our own tempo with PLAY and tap tempo, pitch bend, the mod wheel, sustain, CC 7, all notes off,
