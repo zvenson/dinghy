@@ -4,6 +4,19 @@ Every Dinghy release. The packages and their build attestations are on the
 [releases page](https://github.com/zvenson/dinghy/releases); the Firmware Hub installs them
 ([thefirmwarehub.com](https://thefirmwarehub.com)). Identity: FM-1_99Y (SMK-37 Pro_99Y) for release 0.Y.
 
+## 0.6.1 – 2026-11-26
+
+**The newer FM-1s' screen.** The units with the FM-1 / M-VAVE logo under the screen (most with the UC25HQ80 flash,
+0xB36014) showed washed-out colours, no reds, or a blank screen. Until now Dinghy sent the ST7789V only a reset, the
+colour format, the scan direction and inversion; everything else stayed at the panel's own defaults, which the first
+FM-1s happen to get right and the newer panels do not.
+
+- **M-VAVE's own register values, in M-VAVE's order** (`firmware/src/lcd.c`): display off, sleep out, porch, gate,
+  VCOM, the supplies (LCM, VDV/VRH), 60 Hz, both gamma curves, then pixel format, scan, one data line (E7) and full
+  brightness (51), inversion, normal mode. The display clock stays at 12 MHz, M-VAVE's own.
+- Found and measured by **Jake Handy** for h1 ([jakehandy/h1](https://github.com/jakehandy/h1), 0.3.1) – thank you.
+- **Your fork:** take `lcd.c`'s new `LCD_SEQ` (the FM-1 branch). Nothing else changes; the first FM-1s look as before.
+
 ## 0.6 – 2026-11-24
 
 The basics OberVave has grown, brought over as the kit: headers you include after `platform.c` when you want them.
