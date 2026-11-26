@@ -16,6 +16,7 @@ FM-1s happen to get right and the newer panels do not.
   brightness (51), inversion, normal mode. The display clock stays at 12 MHz, M-VAVE's own.
 - Found and measured by **Jake Handy** for h1 ([jakehandy/h1](https://github.com/jakehandy/h1), 0.3.1) – thank you.
 - **Your fork:** take `lcd.c`'s new `LCD_SEQ` (the FM-1 branch). Nothing else changes; the first FM-1s look as before.
+- **Any other FM-1 firmware** (fm1-base, Felucca forks): [docs/NEWER-FM1-SCREEN.md](docs/NEWER-FM1-SCREEN.md).
 
 ## 0.6 – 2026-11-24
 
